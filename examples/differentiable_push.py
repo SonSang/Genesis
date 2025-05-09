@@ -89,7 +89,7 @@ def main():
     scene.build()
 
     ########################## forward + backward twice ##########################
-    for _ in range(2):
+    for trial in range(2):
         scene.reset()
         horizon = 150
         init_pos = gs.tensor([0.3, 0.1, 0.28], requires_grad=True)
@@ -105,6 +105,8 @@ def main():
         loss = 0
         v_list = []
         w_list = []
+        cam_0.start_recording()
+        cam_1.start_recording()
         for i in range(horizon):
             v_i = gs.tensor([0.0, 1.0, 0.0], requires_grad=True)
             # w_i = gs.tensor([2.0, 0.0, 0.0], requires_grad=True)
@@ -114,8 +116,8 @@ def main():
             # w_list.append(w_i)
 
             scene.step()
-            # img0 = cam_0.render()
-            # img1 = cam_1.render()
+            cam_0.render()
+            cam_1.render()
 
             # you can use a scene_state
             if i == 25:
@@ -146,6 +148,10 @@ def main():
         print(v_obj1_init.grad)
         print(pos_obj1_init.grad)
         init_pos.zero_grad()
+        
+        ### save the video
+        cam_0.stop_recording(save_to_filename=f"output/differentiable_push/{trial}/cam_0.mp4", fps=30)
+        cam_1.stop_recording(save_to_filename=f"output/differentiable_push/{trial}/cam_1.mp4", fps=30)
 
 
 if __name__ == "__main__":
