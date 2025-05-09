@@ -19,6 +19,7 @@ from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 from .rigid_equality import RigidEquality
+from genesis.utils.misc import to_gs_tensor
 
 
 @ti.data_oriented
@@ -79,6 +80,23 @@ class RigidEntity(Entity):
         self._is_built = False
 
         self._load_model()
+        
+        self.init_tgt_vars()
+
+    def init_tgt_keys(self):
+
+        self._tgt_keys = ["pos"] # ["vel", "pos", "act", "actu"]
+        
+    def init_tgt_vars(self):
+        
+        # temp variable to store targets for next step
+        self._tgt = dict()
+        self._tgt_buffer = dict()
+        self.init_tgt_keys()
+
+        for key in self._tgt_keys:
+            self._tgt[key] = None
+            self._tgt_buffer[key] = list()
 
     def _load_model(self):
         self._links = gs.List()
@@ -1610,6 +1628,36 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
+    
+    def process_input(self, in_backward=False):
+        if in_backward:
+            # use negative index because buffer length might not be full
+            index = self._sim.cur_step_local - self._sim.max_steps_local
+            for key in self._tgt_keys:
+                self._tgt[key] = self._tgt_buffer[key][index]
+
+        else:
+            for key in self._tgt_keys:
+                self._tgt_buffer[key].append(self._tgt[key])
+
+        # set_pos followed by set_vel, because set_pos resets velocity.
+        if self._tgt["pos"] is not None:
+            self._tgt["pos"].assert_contiguous()
+            self._tgt["pos"].assert_sceneless()
+            self.set_pos(self._sim.cur_substep_local, self._tgt["pos"])
+
+        # if self._tgt["vel"] is not None:
+        #     self._tgt["vel"].assert_contiguous()
+        #     self._tgt["vel"].assert_sceneless()
+        #     self.set_vel(self._sim.cur_substep_local, self._tgt["vel"])
+
+        # if self._tgt["act"] is not None:
+        #     assert self._tgt["act"] in [gs.ACTIVE, gs.INACTIVE]
+        #     self.set_active(self._sim.cur_substep_local, self._tgt["act"])
+
+        for key in self._tgt_keys:
+            self._tgt[key] = None
+
 
     def get_joint(self, name=None, uid=None):
         """
@@ -1861,14 +1909,23 @@ class RigidEntity(Entity):
     def get_links_invweight(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
+    
+    def set_position(self, pos):
+        """
+        Save the given position (entity's base link) to the target tensor.
+        """
+        pos = to_gs_tensor(pos)
+        self._tgt["pos"] = pos
 
     @gs.assert_built
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, unsafe=False):
+    def set_pos(self, f, pos, envs_idx=None, *, zero_velocity=True, unsafe=False):
         """
         Set position of the entity's base link.
 
         Parameters
         ----------
+        f : int
+            The substep index.
         pos : array_like
             The position to set.
         zero_velocity : bool, optional
@@ -1882,7 +1939,7 @@ class RigidEntity(Entity):
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             pos = _pos
         self._solver.set_base_links_pos(
-            pos.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
+            f, pos.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
         )
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
