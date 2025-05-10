@@ -3761,7 +3761,8 @@ class RigidSolver(Solver):
         """
         Collect gradients from downstream queried states.
         """
-        pass
+        for entity in self._entities:
+            entity.collect_output_grads()
 
     def reset_grad(self):
         pass
@@ -3793,7 +3794,7 @@ class RigidSolver(Solver):
 
     def update_vgeoms_render_T(self):
         self._kernel_update_vgeoms_render_T(self._vgeoms_render_T)
-
+        
     def get_state(self, f):
         if self.is_active():
             state = RigidSolverState(self._scene)
@@ -3843,6 +3844,15 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_l, i_b in ti.ndrange(self.n_geoms, self._B):
             friction_ratio[i_b, i_l] = self.geoms_state[f, i_l, i_b].friction_ratio
+
+    @ti.kernel
+    def _kernel_get_entity_state(
+        self,
+        f: ti.int32,
+        pos: ti.types.ndarray(),
+        quat: ti.types.ndarray(),
+    ):
+        pass
 
     def set_state(self, f, state, envs_idx=None):
         if self.is_active():
@@ -4555,41 +4565,43 @@ class RigidSolver(Solver):
                 self.dofs_info[dofs_idx[i_d_]].limit[0] = lower[i_d_]
                 self.dofs_info[dofs_idx[i_d_]].limit[1] = upper[i_d_]
 
-    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_dofs_velocity(self, f, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
 
         if velocity is None:
-            self._kernel_set_dofs_zero_velocity(dofs_idx, envs_idx)
+            self._kernel_set_dofs_zero_velocity(f, dofs_idx, envs_idx)
         else:
             if self.n_envs == 0:
                 velocity = velocity.unsqueeze(0)
-            self._kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx)
+            self._kernel_set_dofs_velocity(f, velocity, dofs_idx, envs_idx)
 
         if not skip_forward:
-            self._kernel_forward_kinematics_links_geoms(envs_idx)
+            self._kernel_forward_kinematics_links_geoms(f, envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_velocity(
         self,
+        f: ti.int32,
         velocity: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].vel = velocity[i_b_, i_d_]
+            self.dofs_state[f, dofs_idx[i_d_], envs_idx[i_b_]].vel = velocity[i_b_, i_d_]
 
     @ti.kernel
     def _kernel_set_dofs_zero_velocity(
         self,
+        f: ti.int32,
         dofs_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].vel = 0.0
+            self.dofs_state[f, dofs_idx[i_d_], envs_idx[i_b_]].vel = 0.0
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(

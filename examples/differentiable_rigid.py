@@ -103,7 +103,8 @@ def main():
             if i == horizon - 1:
                 # compute loss
                 goal = gs.tensor([0.5, 0.8, 0.05])
-                box_pos = box.get_pos()
+                box_state = box.get_state()
+                box_pos = box_state.pos[0]
                 loss += torch.pow(box_pos - goal, 2).sum()
 
         timer.stamp("forward took: ")

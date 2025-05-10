@@ -14,6 +14,8 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
+from genesis.engine.states.entities import RigidEntityState
+from genesis.engine.states.cache import QueriedStates
 
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
@@ -82,6 +84,8 @@ class RigidEntity(Entity):
         self._load_model()
         
         self.init_tgt_vars()
+        
+        self._queried_states = QueriedStates()
 
     def init_tgt_keys(self):
 
@@ -1632,7 +1636,7 @@ class RigidEntity(Entity):
     def process_input(self, in_backward=False):
         if in_backward:
             # use negative index because buffer length might not be full
-            index = self._sim.cur_step_local - self._sim.max_steps_local
+            index = self._sim.cur_step_local - self._sim._steps_local
             for key in self._tgt_keys:
                 self._tgt[key] = self._tgt_buffer[key][index]
 
@@ -1910,6 +1914,34 @@ class RigidEntity(Entity):
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
     
+    @gs.assert_built
+    def get_state(self):
+        state = RigidEntityState(self, self._sim.cur_step_global)
+        self._kernel_get_base_link_state(
+            f=self._sim.cur_substep_local,
+            pos=state.pos,
+            quat=state.quat,
+        )
+
+        # we store all queried states to track gradient flow
+        self._queried_states.append(state)
+
+        return state
+    
+    @ti.kernel
+    def _kernel_get_base_link_state(
+        self,
+        f: ti.i32,
+        pos: ti.types.ndarray(),
+        quat: ti.types.ndarray(),
+    ):
+        for i_b in ti.ndrange(self._solver._B):
+            l = self._solver.links_state[f, self.base_link_idx, i_b]
+            for j in ti.static(range(3)):
+                pos[i_b, j] = l.pos[j]
+            for j in ti.static(range(4)):
+                quat[i_b, j] = l.quat[j]
+    
     def set_position(self, pos):
         """
         Save the given position (entity's base link) to the target tensor.
@@ -1942,7 +1974,7 @@ class RigidEntity(Entity):
             f, pos.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
         )
         if zero_velocity:
-            self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
+            self.zero_all_dofs_velocity(f, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, unsafe=False):
@@ -2168,12 +2200,14 @@ class RigidEntity(Entity):
         self._solver.set_dofs_damping(damping, dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_dofs_velocity(self, f, velocity=None, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the entity's dofs' velocity.
 
         Parameters
         ----------
+        f : int
+            The substep index.
         velocity : array_like | None
             The velocity to set. Zero if not specified.
         dofs_idx_local : None | array_like, optional
@@ -2182,7 +2216,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, unsafe=unsafe)
+        self._solver.set_dofs_velocity(f, velocity, dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True, unsafe=False):
@@ -2465,17 +2499,19 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_damping(dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def zero_all_dofs_velocity(self, envs_idx=None, *, unsafe=False):
+    def zero_all_dofs_velocity(self, f, envs_idx=None, *, unsafe=False):
         """
         Zero the velocity of all the entity's dofs.
 
         Parameters
         ----------
+        f : int
+            The substep index.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         dofs_idx_local = torch.arange(self.n_dofs, dtype=gs.tc_int, device=gs.device)
-        self.set_dofs_velocity(None, dofs_idx_local, envs_idx, unsafe=unsafe)
+        self.set_dofs_velocity(f, None, dofs_idx_local, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def detect_collision(self, env_idx=0):
@@ -2722,7 +2758,38 @@ class RigidEntity(Entity):
         for link in self.links:
             mass += link.get_mass()
         return mass
+    
+    def collect_output_grads(self):
+        """
+        Collect gradients from external queried states.
+        """
+        if self._sim.cur_step_global in self._queried_states:
+            # one step could have multiple states
+            for state in self._queried_states[self._sim.cur_step_global]:
+                self.add_grad_from_state(state)
+    
+    def add_grad_from_state(self, state):
+        if state.pos.grad is not None:
+            state.pos.assert_contiguous()
+            self.set_frame_add_grad_pos(self._sim.cur_substep_local, state.pos.grad)
+            
+        if state.quat.grad is not None:
+            state.quat.assert_contiguous()
+            self.set_frame_add_grad_quat(self._sim.cur_substep_local, state.quat.grad)
+        
+    @ti.kernel
+    def set_frame_add_grad_pos(self, f: ti.i32, pos_grad: ti.types.ndarray()):        
+        for i_b in ti.ndrange(self._solver._B):
+            for j in ti.static(range(3)):
+                self._solver.links_state.grad[f, self.base_link_idx, i_b].pos[j] += pos_grad[i_b, j]
+                
+    @ti.kernel
+    def set_frame_add_grad_quat(self, f: ti.i32, quat_grad: ti.types.ndarray()):
+        for i_b in ti.ndrange(self._solver._B):
+            for j in ti.static(range(4)):
+                self._solver.links_state.grad[f, self.base_link_idx, i_b].quat[j] += quat_grad[i_b, j]
 
+        
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
