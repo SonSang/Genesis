@@ -40,7 +40,7 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+    #plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
     box = scene.add_entity(
         gs.morphs.Box(
             lower=(0.2, 0.1, 0.05),

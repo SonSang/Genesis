@@ -185,7 +185,8 @@ def init(
         ti.init(
             arch=TI_ARCH[platform][backend],
             # debug is causing segfault on some machines
-            debug=False,
+            debug=True,
+            print_ir=False,
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS

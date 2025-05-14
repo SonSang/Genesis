@@ -234,7 +234,7 @@ class Simulator(RBC):
         if self._rigid_only:  # "Only Advance!" --Thomas Wade :P
             self.process_input(in_backward=in_backward)
             for _ in range(self._substeps):
-                self.rigid_solver.substep(self.cur_substep_local)
+                self.substep(self.cur_substep_local)
                 
                 self._cur_substep_global += 1
                 if self.cur_substep_local == 0 and not in_backward:

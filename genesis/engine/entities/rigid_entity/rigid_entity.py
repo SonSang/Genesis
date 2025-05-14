@@ -84,6 +84,7 @@ class RigidEntity(Entity):
         self._load_model()
         
         self.init_tgt_vars()
+        self.init_ckpt()
         
         self._queried_states = QueriedStates()
 
@@ -1661,7 +1662,23 @@ class RigidEntity(Entity):
 
         for key in self._tgt_keys:
             self._tgt[key] = None
+    
+    def init_ckpt(self):
+        self._ckpt = dict()
+        
+    def save_ckpt(self, ckpt_name):
+        if ckpt_name not in self._ckpt:
+            self._ckpt[ckpt_name] = {
+                "_tgt_buffer": dict(),
+            }
 
+        for key in self._tgt_keys:
+            self._ckpt[ckpt_name]["_tgt_buffer"][key] = list(self._tgt_buffer[key])
+            self._tgt_buffer[key].clear()
+
+    def load_ckpt(self, ckpt_name):
+        for key in self._tgt_keys:
+            self._tgt_buffer[key] = list(self._ckpt[ckpt_name]["_tgt_buffer"][key])
 
     def get_joint(self, name=None, uid=None):
         """
