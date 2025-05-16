@@ -39,6 +39,22 @@ def ti_rotvec_to_quat(rotvec):
 
 
 @ti.func
+def ti_rotvec_to_quat_safe_ad(rotvec):
+    '''
+    Safe version of ti_rotvec_to_quat for automatic differentiation (avoid theta == 0 case)
+    '''
+    thetasq = rotvec.norm_sqr()
+    v = ti.Vector.zero(gs.ti_float, 3)
+    quat = ti.Vector([1.0, 0.0, 0.0, 0.0], dt=gs.ti_float)
+    if thetasq > (gs.EPS * gs.EPS):
+        theta = ti.sqrt(thetasq)
+        axis = rotvec / theta
+        v = axis * ti.sin(theta / 2)
+        quat = ti.Vector([ti.cos(theta / 2), v[0], v[1], v[2]]).normalized()
+    return quat
+
+
+@ti.func
 def ti_rotvec_to_R(rotvec):
     return ti_quat_to_R(ti_rotvec_to_quat(rotvec))
 

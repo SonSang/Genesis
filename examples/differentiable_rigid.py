@@ -6,6 +6,8 @@ import genesis as gs
 
 import numpy as np
 
+import tqdm
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -13,16 +15,22 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="debug")
+    gs.init(seed=0, precision="32", logging_level="error")
 
     ########################## create a scene ##########################
-
+    dt = 1e-2
+    horizon = 100
+    substeps = 1
+    goal_pos = gs.tensor([0.7, 1.0, 0.05])
+    goal_quat = torch.nn.functional.normalize(gs.tensor([0.3, 0.2, 0.1, 0.9]), p=2, dim=-1)
+    optimize_init_pos = True
+    
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=2e-3,
-            substeps=10,
+            dt=dt,
+            substeps=substeps,
             requires_grad=True,
-            gravity=(0, 0, 0)           # disable gravity
+            gravity=(0, 0, -1)           # disable gravity
         ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,         # disable collision for now
@@ -40,25 +48,30 @@ def main():
     )
 
     ########################## entities ##########################
-    #plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+    # plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
     box = scene.add_entity(
         gs.morphs.Box(
-            lower=(0.2, 0.1, 0.05),
-            upper=(0.4, 0.3, 0.35),
+            pos=(0, 0, 0),
+            size=(0.1, 0.1, 0.2),
         ),
         surface=gs.surfaces.Default(
             color=(0.9, 0.0, 0.0, 1.0),
         ),
     )
+    target = scene.add_entity(
+        gs.morphs.Box(
+            pos=goal_pos.cpu().tolist(),
+            quat=goal_quat.cpu().tolist(),
+            size=(0.1, 0.1, 0.2),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 0.9, 0.0, 0.5),
+        ),
+    )
 
     ########################## cameras ##########################
-    cam_0 = scene.add_camera(
-        pos=(1.5, 0.5, 2.42),
-        lookat=(0.5, 0.5, 0.1),
-        fov=30,
-        GUI=True,
-    )
-    cam_1 = scene.add_camera(
+    cam = scene.add_camera(
+        res=(1280, 720),
         pos=(-3.0, 1.5, 2.0),
         lookat=(0.5, 0.5, 0.1),
         fov=30,
@@ -68,63 +81,79 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    ########################## forward + backward twice ##########################
-    for trial in range(1):
-        scene.reset()
-        horizon = 1
-        
+    ########################## optimize ##########################
+    num_iter = 200
+    lr = 1e-2
+    record_every = 50
+    
+    if optimize_init_pos:
         init_pos = gs.tensor([0.3, 0.1, 0.28], requires_grad=True)
-
-        # forward pass
-        print("forward")
-        timer = gs.tools.Timer()
-        box.set_position(init_pos)
-        loss = 0
-        # v_list = []
-        cam_0.start_recording()
-        cam_1.start_recording()
-        for i in range(horizon):
-            # v_i = gs.tensor(np.ones(box.n_dofs), requires_grad=False)
-            # box.set_dofs_velocity(v_i)
-            # v_list.append(v_i)
-            
-            scene.step()
-            cam_0.render()
-            cam_1.render()
-
-            # you can use a scene_state
-            if i == 25:
-                # compute loss
-                goal = gs.tensor([0.5, 0.8, 0.05])
-                box_pos = box.get_pos()
-                loss += torch.pow(box_pos - goal, 2).sum()
-
-            # you can also use an entity's state
-            if i == horizon - 1:
-                # compute loss
-                goal = gs.tensor([0.5, 0.8, 0.05])
-                box_state = box.get_state()
-                box_pos = box_state.pos[0]
-                loss += torch.pow(box_pos - goal, 2).sum()
-
-        timer.stamp("forward took: ")
-        # backward pass
-        print("backward")
-        loss.backward()  # this lets gradient flow all the way back to tensor input
-        timer.stamp("backward took: ")
-        # for v_i in v_list:
-        #     print(v_i.grad)
-        #     v_i.zero_grad()
-        # # for w_i in w_list:
-        # #     print(w_i.grad)
-        # #     w_i.zero_grad()
-        print(init_pos.grad)
-        # init_pos.zero_grad()
+        init_quat = gs.tensor([1.0, 0.0, 0.0, 0.0], requires_grad=True)
+        init_vel = gs.tensor([0.0, 0.0, 1.0], requires_grad=True)
+        init_ang = gs.tensor([1.0, 1.0, 1.0], requires_grad=True)
+        optimizer = torch.optim.Adam([init_pos, init_quat, init_vel, init_ang], lr=lr)
+    else:
+        init_pos = gs.tensor([0.3, 0.1, 0.28], requires_grad=False)
+        init_quat = gs.tensor([1.0, 0.0, 0.0, 0.0], requires_grad=False)
+        init_vel = gs.tensor([0.0, 0.0, 1.0], requires_grad=True)
+        init_ang = gs.tensor([1.0, 1.0, 1.0], requires_grad=True)
+        optimizer = torch.optim.Adam([init_vel, init_ang], lr=lr)
+    
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_iter, eta_min=1e-3)
+    
+    
+    bar = tqdm.tqdm(range(num_iter))
+    for iter in bar:
+        scene.reset()
         
-        ### save the video
-        script_name = __file__.split("/")[-1].split(".")[0]
-        cam_0.stop_recording(save_to_filename=f"output/{script_name}/{trial}/cam_0.mp4", fps=30)
-        cam_1.stop_recording(save_to_filename=f"output/{script_name}/{trial}/cam_1.mp4", fps=30)
+        do_record = (iter % record_every == 0) or (iter == num_iter - 1)
+        
+        box.set_position(init_pos)
+        box.set_quaternion(init_quat)
+        box.set_velocity(init_vel)
+        box.set_angular_velocity(init_ang)
+        if do_record:
+            cam.start_recording()
+        
+        loss = 0
+        for i in range(horizon):
+            scene.step()
+            target.set_pos(0, goal_pos)
+            target.set_quat(0, goal_quat)
+            if do_record:
+                cam.render()
+
+        box_state = box.get_state()
+        box_pos = box_state.pos[0]
+        box_quat = box_state.quat[0]
+        loss = torch.abs(box_pos - goal_pos).sum() + torch.abs(box_quat - goal_quat).sum()
+
+        optimizer.zero_grad()
+        loss.backward()  # this lets gradient flow all the way back to tensor input
+        optimizer.step()
+        scheduler.step()
+        
+        bar.set_description(f"loss: {loss.item():.4f} | lr: {scheduler.get_last_lr()[0]:.4f}")
+        with torch.no_grad():
+            init_quat.data = torch.nn.functional.normalize(init_quat.data, p=2, dim=-1)
+            
+        ## save the video
+        if do_record:
+            fps = 1.0 / dt
+            script_name = __file__.split("/")[-1].split(".")[0]
+            dir_name = "posvel" if optimize_init_pos else "vel"
+            cam.stop_recording(save_to_filename=f"output/{script_name}/{dir_name}/cam_{iter:04d}.mp4", fps=fps)
+        
+    print("====================== Optimization Results")
+    print("goal pos: ", goal_pos)
+    print("init pos: ", init_pos)
+    print()
+    
+    print("goal quat: ", goal_quat)
+    print("init quat: ", init_quat)
+    print()
+    
+    print("init vel: ", init_vel)
 
 
 if __name__ == "__main__":
