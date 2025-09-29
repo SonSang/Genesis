@@ -111,3 +111,26 @@ jobs:
         with:
           name: speed-test-results
           path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+
+      - name: Compare benchamrk stats vs last main runs and comment (no fail on regression)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_NAME: Production
+          # Number of main runs to use as baselines
+          REGRESSION_BASELINES: "5"
+          # Regression tolerance (%)
+          RUNTIME_REGRESSION_TOLERANCE_PCT: "10"
+          COMPILE_REGRESSION_TOLERANCE_PCT: "10"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CURRENT_SPEED_TXT_PATH: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+          OUTPUT_DEBUG_JSON: "mnt/data/artifacts/benchmark_compare_result.json"
+        run: |
+          python -m pip install --upgrade requests
+          python tests/compare_benchmarks.py
+
+      - name: Upload benchmark compare report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-compare-report
+          path: |
+            mnt/data/artifacts/benchmark_compare_result.json
