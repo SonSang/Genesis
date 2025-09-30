@@ -1,4 +1,4 @@
-name: Alarm regression
+name: Alarm Regression
 
 on:
   workflow_run:
@@ -18,9 +18,48 @@ jobs:
       contains(fromJson('["success","neutral"]'), github.event.workflow_run.conclusion)
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
-          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
-          fetch-depth: 0
+      - name: Decide & comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os, json, io, zipfile, requests, sys
+
+          ev = json.load(open(os.environ['GITHUB_EVENT_PATH'],'r'))
+          wr = ev['workflow_run']
+          repo_api = ev['repository']['url']
+          prs = wr.get('pull_requests') or []
+          if not prs:
+              print("No associated PR -> skip"); sys.exit(0)
+          pr_num = prs[0]['number']
+          
+          s = requests.Session()
+          s.headers.update({
+              'Authorization': f"Bearer {os.environ['GITHUB_TOKEN']}",
+              'Accept': 'application/vnd.github+json',
+          })
+
+          # 1) Find the comparison result in the artifact
+          arts = s.get(wr['artifacts_url']).json().get('artifacts', [])
+          target = next((a for a in arts if a.get('name')=='speed-test-results' and not a.get('expired')), None)
+          if not target:
+              print("No artifact 'speed-test-results' -> skip"); sys.exit(0)
+
+          z = s.get(target['archive_download_url'], allow_redirects=True).content
+          zf = zipfile.ZipFile(io.BytesIO(z))
+
+          # Use pr_comment.md if it exists
+          body = None
+          mdname = next((n for n in zf.namelist() if n.endswith('.md')), None)
+          if mdname:
+              body = zf.read(mdname).decode('utf-8')
+
+          # Check if already commented
+          cs = s.get(f"{repo_api}/issues/{pr_num}/comments").json()
+          tag = f"bench-guard-run:{wr['id']}"
+          if any(tag in (c.get('body') or '') for c in cs):
+              print("Already commented -> skip"); sys.exit(0)
+
+          r = s.post(f"{repo_api}/issues/{pr_num}/comments", json={'body': body})
+          print("Comment status:", r.status_code, r.text[:200])
+          PY
