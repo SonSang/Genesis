@@ -243,8 +243,8 @@ jobs:
           rows_ct = []
           reg_found = False
           for bid in sorted(current_bm.keys()):
-              cur_rt = 0 #current_bm[bid].get("runtime_fps")
-              cur_ct = 0 #current_bm[bid].get("compile_time")
+              cur_rt = current_bm[bid].get("runtime_fps")
+              cur_ct = current_bm[bid].get("compile_time")
               base_rt = mean_of("runtime_fps", bid)
               base_ct = mean_of("compile_time", bid)
 
