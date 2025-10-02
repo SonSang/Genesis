@@ -281,7 +281,7 @@ jobs:
           check_body = "\n".join(summary_top + ["", "<details><summary>Benchmark details</summary>", "", *table_lines, "", "</details>"])
 
           # ----- compose COMMENT body -----
-          if reg_found:
+          if True: #reg_found:
               comment_body = "\n".join([
                   ":warning: **Benchmark comparison vs W&B baselines**",
                   f"- Baselines considered: **{len(rev_order)}** commits",
