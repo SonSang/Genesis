@@ -8,10 +8,8 @@ on:
 permissions:
   contents: read
   actions: read
-  issues: write
   pull-requests: write
   checks: write
-  statuses: write
 
 jobs:
   comment-if-regressed:
