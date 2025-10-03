@@ -88,6 +88,7 @@ jobs:
           import os, sys, json, math, re
           import statistics as stats
           import wandb
+          from pathlib import Path
 
           # ---------- helpers ----------
           SHA_RE = re.compile(r"[0-9a-fA-F]{7,40}")
@@ -150,38 +151,43 @@ jobs:
               return f"**{s}**" if highlight else s
 
           # ----- thresholds -----
-          tol_rt = float(os.environ.get("RUNTIME_REGRESSION_TOLERANCE_PCT","10"))
-          tol_ct = float(os.environ.get("COMPILE_REGRESSION_TOLERANCE_PCT","10"))
-          MAX_REVISIONS = int(os.environ.get("MAX_REVISIONS","5"))
-          NO_CHANGE_PATIENCE = int(os.environ.get("NO_CHANGE_PATIENCE","100"))
+          tol_rt = float(os.environ.get("RUNTIME_REGRESSION_TOLERANCE_PCT"))
+          tol_ct = float(os.environ.get("COMPILE_REGRESSION_TOLERANCE_PCT"))
+          max_revisions = int(os.environ.get("MAX_REVISIONS"))
+          no_change_patience = int(os.environ.get("NO_CHANGE_PATIENCE"))
+
+          pr_comment_path = Path(os.environ.get("PR_COMMENT_PATH")).expanduser()
+          check_body_path = Path(os.environ.get("CHECK_BODY_PATH")).expanduser()
 
           # ----- load artifact (current results) -----
-          artifacts_path = os.path.abspath(os.environ.get("ARTIFACTS_DIR", "./artifacts"))
-          if not os.path.exists(artifacts_path):
-              open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"),"w").close()
-              open(os.environ.get("CHECK_BODY_PATH","check_output.md"),"w").close()
+          artifacts_dir = Path(os.environ.get("ARTIFACTS_DIR")).expanduser().resolve()
+          if not artifacts_dir.exists():
+              pr_comment_path.touch()
+              check_body_path.touch()
               sys.exit(0)
 
-          current_txt_path = None
-          for root, _, files in os.walk(artifacts_path):
-              for fname in files:
-                  if fname.startswith("speed_test") and fname.endswith(".txt"):
-                      current_txt_path = os.path.join(root, fname); break
-              if current_txt_path: break
+          current_txt_path = next(artifacts_dir.rglob("speed_test*.txt"), None)
+          # current_txt_path = None
+          # for root, _, files in os.walk(artifacts_path):
+          #     for fname in files:
+          #         if fname.startswith("speed_test") and fname.endswith(".txt"):
+          #             current_txt_path = os.path.join(root, fname); break
+          #     if current_txt_path: break
           if current_txt_path is None:
-              open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"),"w").close()
-              open(os.environ.get("CHECK_BODY_PATH","check_output.md"),"w").close()
+              pr_comment_path.touch()
+              check_body_path.touch()
               sys.exit(0)
 
-          with open(current_txt_path, "r", encoding="utf-8") as f:
-              current_bm = artifacts_parse_speed_txt_lines(f.readlines())
+          current_bm = artifacts_parse_speed_txt_lines(current_txt_path.read_text(encoding="utf-8").splitlines())
+          # with open(current_txt_path, "r", encoding="utf-8") as f:
+          #     current_bm = artifacts_parse_speed_txt_lines(f.readlines())
 
           # ----- W&B baselines -----
           if not os.getenv("WANDB_API_KEY"):
               try: wandb.login(anonymous="allow", relogin=True)
               except Exception: pass
-          ENTITY = os.environ.get("WANDB_ENTITY","")
-          PROJECT= os.environ.get("WANDB_PROJECT","")
+          ENTITY = os.environ.get("WANDB_ENTITY")
+          PROJECT= os.environ.get("WANDB_PROJECT")
 
           api = wandb.Api()
           runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
@@ -196,21 +202,21 @@ jobs:
               if not raw_rev or not raw_bid:
                   if selected_revs is not None:
                       no_change += 1
-                      if no_change >= NO_CHANGE_PATIENCE: break
+                      if no_change >= no_change_patience: break
                   continue
               rev = _norm_rev(raw_rev.get("value")); bid = raw_bid.get("value")
               if not rev or not bid:
                   if selected_revs is not None:
                       no_change += 1
-                      if no_change >= NO_CHANGE_PATIENCE: break
+                      if no_change >= no_change_patience: break
                   continue
               if selected_revs is not None and rev not in selected_revs:
                   no_change += 1
-                  if no_change >= NO_CHANGE_PATIENCE: break
+                  if no_change >= no_change_patience: break
                   continue
               if rev not in by_rev:
                   by_rev[rev]={}; rev_order.append(rev)
-                  if len(rev_order) >= MAX_REVISIONS: selected_revs = set(rev_order)
+                  if len(rev_order) >= max_revisions: selected_revs = set(rev_order)
 
               nbid = wandb_normalize_benchmark_id(bid)
               if nbid not in by_rev[rev]:
@@ -226,7 +232,7 @@ jobs:
               else:
                   if selected_revs is not None:
                       no_change += 1
-                      if no_change >= NO_CHANGE_PATIENCE: break
+                      if no_change >= no_change_patience: break
 
           def mean_of(metric, bid):
               vals=[]
@@ -241,8 +247,8 @@ jobs:
           rows_ct = []
           reg_found = False
           for bid in sorted(current_bm.keys()):
-              cur_rt = current_bm[bid].get("runtime_fps")
-              cur_ct = current_bm[bid].get("compile_time")
+              cur_rt = 0 #current_bm[bid].get("runtime_fps")
+              cur_ct = 0 #current_bm[bid].get("compile_time")
               base_rt = mean_of("runtime_fps", bid)
               base_ct = mean_of("compile_time", bid)
 
@@ -309,13 +315,12 @@ jobs:
               comment_body = ""
 
           # write files
-          with open(os.environ.get("CHECK_BODY_PATH","check_output.md"), "w", encoding="utf-8") as f:
-              f.write(check_body+"\n")
-          with open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"), "w", encoding="utf-8") as f:
-              f.write(comment_body+"\n")
+          check_body_path.write_text(check_body+"\n", encoding="utf-8")
+          pr_comment_path.write_text(comment_body+"\n", encoding="utf-8")
 
           # flag for next steps
-          open("HAS_REGRESSIONS.txt","w").write("true\n" if reg_found else "false\n")
+          has_regressions_path = Path("HAS_REGRESSIONS.txt")
+          has_regressions_path.write_text("true\n" if reg_found else "false\n", encoding="utf-8")
           PY
 
           # expose outputs to later steps
