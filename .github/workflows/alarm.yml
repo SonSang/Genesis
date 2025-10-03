@@ -342,7 +342,9 @@ jobs:
           # exit with 1 if regressions are found, 0 otherwise
           sys.exit(1 if reg_found else 0)
           PY
-          echo "HAS_REGRESSIONS=$?" >> "$GITHUB_ENV"
+          rc=$?
+          echo "HAS_REGRESSIONS=${rc}" >> "$GITHUB_ENV"
+          HAS_REGRESSIONS="${rc}"
           } || true
 
           # expose outputs to later steps
