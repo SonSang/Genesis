@@ -84,6 +84,7 @@ jobs:
           PR_COMMENT_PATH: pr_comment.md
           CHECK_BODY_PATH: check_output.md
         run: |
+          {
           python - <<'PY'
           import os, sys, json, math, re
           import wandb
@@ -260,7 +261,7 @@ jobs:
                   v = by_rev.get(r,{}).get(bid,{}).get(metric)
                   if isinstance(v,(int,float)) and not (isinstance(v,float) and math.isnan(v)):
                       vals.append(float(v))
-              return sum(vals) / len(vals)
+              return sum(vals) / max(len(vals), 1)
               
           # ----- build TWO tables -----
           rows_rt = []
@@ -338,21 +339,25 @@ jobs:
           check_body_path.write_text(check_body+"\n", encoding="utf-8")
           pr_comment_path.write_text(comment_body+"\n", encoding="utf-8")
 
-          # flag for next steps
-          has_regressions_path = Path("HAS_REGRESSIONS.txt")
-          has_regressions_path.write_text("true\n" if reg_found else "false\n", encoding="utf-8")
+          # exit with 1 if regressions are found, 0 otherwise
+          sys.exit(1 if reg_found else 0)
           PY
+          echo "HAS_REGRESSIONS=$?" >> "$GITHUB_ENV"
+          } || true
 
           # expose outputs to later steps
-          echo "HAS_REGRESSIONS=$(cat HAS_REGRESSIONS.txt)" >> "$GITHUB_ENV"
-          {
-            echo 'CHECK_OUTPUT<<__EOF__'
-            cat check_output.md
-            echo '__EOF__'
-          } >> "$GITHUB_ENV"
-
+          if [ -f "check_output.md" ]; then
+            {
+              echo 'CHECK_OUTPUT<<__EOF__'
+              cat check_output.md
+              echo '__EOF__'
+            } >> "$GITHUB_ENV"
+          else
+            echo "CHECK_OUTPUT=" >> "$GITHUB_ENV"
+          fi
+          
           # only set SCRIPT_OUTPUT when we actually want to comment
-          if [ -s "pr_comment.md" ]; then
+          if [ "${HAS_REGRESSIONS}" = "1" ] && [ -s "pr_comment.md" ]; then
             {
               echo 'SCRIPT_OUTPUT<<__EOF__'
               cat pr_comment.md
@@ -387,7 +392,7 @@ jobs:
         with:
           script: |
             const sha = context.payload.workflow_run.head_sha;
-            const hasRegs = (process.env.HAS_REGRESSIONS || 'false').trim() === 'true';
+            const hasRegs = (process.env.HAS_REGRESSIONS || '0').trim() === '1';
             const conclusion = 'success';
             const summary = hasRegs
               ? '🔴 Regressions detected. See tables below.'
