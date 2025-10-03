@@ -1,0 +1,15 @@
+env=cube#10 	| batch_size=8192 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=False 	| compile_time=44 	| runtime_fps=1599481 	| realtime_factor=15995
+env=cube#10 	| batch_size=8192 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=True 	| compile_time=42 	| runtime_fps=1598852 	| realtime_factor=15989
+env=box_pyramid#5 	| batch_size=2048 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=False 	| enable_mujoco_compatibility=False 	| compile_time=38 	| runtime_fps=30213 	| realtime_factor=302
+env=box_pyramid#5 	| batch_size=2048 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=True 	| enable_mujoco_compatibility=False 	| compile_time=38 	| runtime_fps=20852 	| realtime_factor=209
+env=anymal_c 	| batch_size=30000 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=True 	| compile_time=43 	| runtime_fps=12010935 	| realtime_factor=120109
+env=anymal_c 	| batch_size=30000 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=False 	| compile_time=43 	| runtime_fps=12106043 	| realtime_factor=121060
+env=batched_franka 	| batch_size=30000 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=True 	| compile_time=42 	| runtime_fps=12144862 	| realtime_factor=121449
+env=cube#10 	| batch_size=8192 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=True 	| compile_time=45 	| runtime_fps=449954 	| realtime_factor=4500
+env=box_pyramid#5 	| batch_size=2048 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=False 	| enable_mujoco_compatibility=True 	| compile_time=32 	| runtime_fps=16792 	| realtime_factor=168
+env=cube#10 	| batch_size=8192 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=False 	| compile_time=44 	| runtime_fps=451374 	| realtime_factor=4514
+env=anymal_c 	| batch_size=30000 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=False 	| compile_time=41 	| runtime_fps=12134239 	| realtime_factor=121342
+env=batched_franka 	| batch_size=30000 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=False 	| compile_time=45 	| runtime_fps=11917988 	| realtime_factor=119180
+env=batched_franka 	| batch_size=30000 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=False 	| compile_time=43 	| runtime_fps=11843083 	| realtime_factor=118431
+env=anymal_c 	| batch_size=30000 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=True 	| compile_time=44 	| runtime_fps=12146369 	| realtime_factor=121464
+env=batched_franka 	| batch_size=30000 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=True 	| compile_time=41 	| runtime_fps=12073465 	| realtime_factor=120735
