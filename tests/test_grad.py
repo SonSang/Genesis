@@ -1,5 +1,3 @@
-import sys
-
 import numpy as np
 import pytest
 import torch
@@ -413,9 +411,6 @@ def test_diff_solver(monkeypatch):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_rigid(show_viewer):
-    if sys.platform == "darwin" and gs.backend != gs.cpu:
-        pytest.xfail("This test fails on Apple M1 runners be because shader compilation exceeds 100Mb threshold.")
-
     dt = 1e-2
     horizon = 100
     substeps = 1
@@ -509,9 +504,6 @@ def test_differentiable_rigid(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_sim_vs_solver_state_grad_parity(show_viewer):
-    if sys.platform == "darwin" and gs.backend != gs.cpu:
-        pytest.xfail("This test fails on Apple M1 runners be because shader compilation exceeds 100Mb threshold.")
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
