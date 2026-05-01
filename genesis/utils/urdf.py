@@ -273,6 +273,7 @@ def parse_urdf(morph, surface):
                     "contype": 1 if geom_is_col else 0,
                     "conaffinity": 1 if geom_is_col else 0,
                     "friction": gu.default_friction(),
+                    "friction_torsional": gu.default_friction_torsional(),
                     "sol_params": gu.default_solver_params(),
                 }
                 link_g_infos.append(g_info)

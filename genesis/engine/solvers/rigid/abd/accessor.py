@@ -1095,3 +1095,22 @@ def kernel_set_geoms_friction(
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_g_ in range(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_set_geom_friction_torsional(
+    geoms_idx: qd.i32, friction_torsional: qd.f32, geoms_info: array_class.GeomsInfo
+):
+    geoms_info.friction_torsional[geoms_idx] = friction_torsional
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_set_geoms_friction_torsional(
+    friction_torsional: qd.types.ndarray(),
+    geoms_idx: qd.types.ndarray(),
+    geoms_info: array_class.GeomsInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_g_ in range(geoms_idx.shape[0]):
+        geoms_info.friction_torsional[geoms_idx[i_g_]] = friction_torsional[i_g_]

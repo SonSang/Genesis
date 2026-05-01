@@ -244,10 +244,14 @@ def kernel_noslip(
                 delta = constraint_state.efc_force[i_c, i_b] - old_force[0]
                 improvement -= 0.5 * delta**2 / constraint_state.efc_AR[i_c, i_c, i_b] + delta * res[0]
 
-            # Project contact friction (pyramidal 4-edge) with normal fixed
+            # Project contact friction (pyramidal: 4 sliding edges + optional 2 torsional edges)
+            # with normal fixed. Each pair (+axis, -axis) is a 2D box-QP and is decomposed via
+            # mid/y reparameterization (mid = augmented normal coupling, y = signed friction).
+            # When enable_torsional_friction is False, only the 2 sliding pairs are processed.
+            i_row_stride = 6 if qd.static(static_rigid_sim_config.enable_torsional_friction) else 4
             for i_col in range(n_con):
-                base = const_start + i_col * 4
-                for j2 in qd.static(range(2)):
+                base = const_start + i_col * i_row_stride
+                for j2 in qd.static(range(3 if static_rigid_sim_config.enable_torsional_friction else 2)):
                     j_efc = base + j2 * 2
                     res = func_residual_constraint_force(
                         res=res,

@@ -30,7 +30,13 @@ class Rigid(Kinematic["RigidEntity"]):
         otherwise 600 kg/m^3 for basic rigid objects (mug, table...) vs 1500 kg/m^3 for poly-articulated
         robots. Default is None.
     friction : float, optional
-        Friction coefficient within the rigid solver. If None, a default of 1.0 may be used or parsed from file.
+        Sliding (Coulomb) friction coefficient within the rigid solver. If None, a default of 1.0 may be used
+        or parsed from file. Corresponds to ``friction[0]`` in MuJoCo's geom friction triplet.
+    friction_torsional : float, optional
+        Torsional (spinning) friction coefficient. Resists relative rotation about the contact normal axis.
+        Has units of length (m), in MuJoCo convention; the friction torque limit is
+        ``friction_torsional * normal_force``. If None, a default of 0.0 is used (no torsional friction),
+        unless overridden by an MJCF/URDF source. Corresponds to ``friction[1]`` in MuJoCo.
     needs_coup : bool, optional
         Whether the material participates in coupling with other solvers. Default is True.
     coup_friction : float, optional
@@ -78,6 +84,7 @@ class Rigid(Kinematic["RigidEntity"]):
 
     rho: ValidFloat | None = None
     friction: Annotated[ValidFloat, Field(ge=0.01, le=5.0)] | None = None
+    friction_torsional: Annotated[ValidFloat, Field(ge=0.0, le=5.0)] | None = None
     needs_coup: StrictBool = True
     coup_friction: NonNegativeFloat = 0.1
     coup_softness: NonNegativeFloat = 0.002

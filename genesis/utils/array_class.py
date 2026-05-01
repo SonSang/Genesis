@@ -427,6 +427,7 @@ class StructContactData(metaclass=BASE_METACLASS):
     normal: V_ANNOTATION
     pos: V_ANNOTATION
     friction: V_ANNOTATION
+    friction_torsional: V_ANNOTATION
     sol_params: V_ANNOTATION
     force: V_ANNOTATION
     link_a: V_ANNOTATION
@@ -445,6 +446,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
         pos=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
         penetration=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
         friction=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
+        friction_torsional=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
         sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
         force=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
@@ -1664,6 +1666,7 @@ class StructGeomsInfo(metaclass=BASE_METACLASS):
     link_idx: V_ANNOTATION
     type: V_ANNOTATION
     friction: V_ANNOTATION
+    friction_torsional: V_ANNOTATION
     sol_params: V_ANNOTATION
     vert_num: V_ANNOTATION
     vert_start: V_ANNOTATION
@@ -1698,6 +1701,7 @@ def get_geoms_info(solver):
         link_idx=V(dtype=gs.qd_int, shape=shape),
         type=V(dtype=gs.qd_int, shape=shape),
         friction=V(dtype=gs.qd_float, shape=shape),
+        friction_torsional=V(dtype=gs.qd_float, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         vert_num=V(dtype=gs.qd_int, shape=shape),
         vert_start=V(dtype=gs.qd_int, shape=shape),
@@ -2047,6 +2051,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     requires_grad: bool
     prefer_decomposed_solver: int = -1  # -1 = None (auto), 0 = False, 1 = True
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
+    enable_torsional_friction: bool = False
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False

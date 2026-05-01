@@ -438,6 +438,7 @@ def kernel_init_geom_fields(
     geoms_link_idx: qd.types.ndarray(),
     geoms_type: qd.types.ndarray(),
     geoms_friction: qd.types.ndarray(),
+    geoms_friction_torsional: qd.types.ndarray(),
     geoms_sol_params: qd.types.ndarray(),
     geoms_vert_start: qd.types.ndarray(),
     geoms_face_start: qd.types.ndarray(),
@@ -498,6 +499,7 @@ def kernel_init_geom_fields(
         geoms_info.link_idx[i_g] = geoms_link_idx[i_g]
         geoms_info.type[i_g] = geoms_type[i_g]
         geoms_info.friction[i_g] = geoms_friction[i_g]
+        geoms_info.friction_torsional[i_g] = geoms_friction_torsional[i_g]
 
         geoms_info.is_convex[i_g] = geoms_is_convex[i_g]
         geoms_info.needs_coup[i_g] = geoms_needs_coup[i_g]

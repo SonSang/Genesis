@@ -62,12 +62,14 @@ class ConstraintSolver:
         self.sparse_solve = rigid_solver._options.sparse_solve
 
         # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
-        # * 4 constraints per contact
+        # * 4 sliding pyramidal constraints per contact
+        # * +2 torsional pyramidal constraints per contact when enable_torsional_friction is set
         # * 1 constraint per 1DoF joint limit (upper and lower, if not inf)
         # * 1 constraint per dof frictionloss
         # * up to 6 constraints per equality (weld)
+        n_rows_per_contact = 6 if rigid_solver._options.enable_torsional_friction else 4
         self.len_constraints = int(
-            4 * rigid_solver.collider._collider_info.max_contact_pairs[None]
+            n_rows_per_contact * rigid_solver.collider._collider_info.max_contact_pairs[None]
             + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
             + self._solver.n_dofs
             + self._solver.n_candidate_equalities_ * 6
@@ -630,6 +632,7 @@ def add_collision_constraints(
             contact_data_pos = collider_state.contact_data.pos[i_col, i_b]
             contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
             contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+            contact_data_friction_t = collider_state.contact_data.friction_torsional[i_col, i_b]
             contact_data_sol_params = collider_state.contact_data.sol_params[i_col, i_b]
             contact_data_penetration = collider_state.contact_data.penetration[i_col, i_b]
 
@@ -641,14 +644,18 @@ def add_collision_constraints(
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
 
             invweight = links_info.invweight[link_a_maybe_batch][0]
+            invweight_rot = links_info.invweight[link_a_maybe_batch][1]
             if link_b > -1:
                 invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
+                invweight_rot = invweight_rot + links_info.invweight[link_b_maybe_batch][1]
+
+            i_row_stride = 6 if qd.static(static_rigid_sim_config.enable_torsional_friction) else 4
 
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
                 n = d * contact_data_friction - contact_data_normal
 
-                n_con = collision_con_start + i_col * 4 + i
+                n_con = collision_con_start + i_col * i_row_stride + i
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                         i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -706,9 +713,92 @@ def add_collision_constraints(
                 constraint_state.aref[n_con, i_b] = aref
                 constraint_state.efc_D[n_con, i_b] = 1 / diag
 
+            # Torsional friction constraints (pyramidal pair: ±μ_t about contact normal).
+            # Augmented Jacobian wrench at contact: force=-n̂, torque=±μ_t·n̂.
+            # Per-dof contribution: jac = sign_ab · ((-n̂)·v_at_contact + sign_pyr·μ_t·(n̂·ω_dof))
+            # If μ_t is below epsilon, fall through with a neutral 1-row no-op constraint.
+            # Whole block is gated: when enable_torsional_friction is False, behave exactly as
+            # the legacy 4-row pyramidal friction (no torsional rows allocated, n_constraints
+            # stays at n_contacts * 4 to match MuJoCo with default condim=3).
+            for i_t in range(2 if qd.static(static_rigid_sim_config.enable_torsional_friction) else 0):
+                sign_pyr = gs.qd_float(2.0 * i_t - 1.0)
+
+                n_con = collision_con_start + i_col * 6 + 4 + i_t
+                if qd.static(static_rigid_sim_config.sparse_solve):
+                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
+                        i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+                        constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+                else:
+                    for i_d in range(n_dofs):
+                        constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+
+                if contact_data_friction_t > EPS:
+                    con_n_relevant_dofs = 0
+                    jac_qvel_t = gs.qd_float(0.0)
+                    for i_ab in range(2):
+                        sign = gs.qd_float(-1.0)
+                        link = link_a
+                        if i_ab == 1:
+                            sign = gs.qd_float(1.0)
+                            link = link_b
+
+                        while link > -1:
+                            link_maybe_batch = (
+                                [link, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link
+                            )
+
+                            for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
+                                i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
+
+                                cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                                cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+
+                                t_quat = gu.qd_identity_quat()
+                                t_pos = contact_data_pos - links_state.root_COM[link, i_b]
+                                _, vel = gu.qd_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+
+                                jac_normal = -(vel @ contact_data_normal)
+                                jac_torsion = sign_pyr * contact_data_friction_t * (cdof_ang @ contact_data_normal)
+                                jac = sign * (jac_normal + jac_torsion)
+
+                                jac_qvel_t = jac_qvel_t + jac * dofs_state.vel[i_d, i_b]
+                                constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
+
+                                if qd.static(static_rigid_sim_config.sparse_solve):
+                                    constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
+                                    con_n_relevant_dofs = con_n_relevant_dofs + 1
+
+                            link = links_info.parent_idx[link_maybe_batch]
+
+                    if qd.static(static_rigid_sim_config.sparse_solve):
+                        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+
+                    imp_t, aref_t = gu.imp_aref(
+                        contact_data_sol_params, -contact_data_penetration, jac_qvel_t, -contact_data_penetration
+                    )
+
+                    # Diag: invweight (translational, from -n̂ force part) + μ_t² · invweight_rot (from torque part)
+                    diag_t = invweight + contact_data_friction_t * contact_data_friction_t * invweight_rot
+                    diag_t *= 2 * contact_data_friction_t * contact_data_friction_t * (1 - imp_t) / imp_t
+                    diag_t = qd.max(diag_t, EPS)
+
+                    constraint_state.diag[n_con, i_b] = diag_t
+                    constraint_state.aref[n_con, i_b] = aref_t
+                    constraint_state.efc_D[n_con, i_b] = 1 / diag_t
+                else:
+                    if qd.static(static_rigid_sim_config.sparse_solve):
+                        constraint_state.jac_n_relevant_dofs[n_con, i_b] = 0
+                    constraint_state.diag[n_con, i_b] = gs.qd_float(1.0)
+                    constraint_state.aref[n_con, i_b] = gs.qd_float(0.0)
+                    constraint_state.efc_D[n_con, i_b] = gs.qd_float(1.0)
+
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        constraint_state.n_constraints[i_b] = constraint_state.n_constraints[i_b] + collider_state.n_contacts[i_b] * 4
+        n_rows_per_contact = 6 if qd.static(static_rigid_sim_config.enable_torsional_friction) else 4
+        constraint_state.n_constraints[i_b] = (
+            constraint_state.n_constraints[i_b] + collider_state.n_contacts[i_b] * n_rows_per_contact
+        )
 
 
 @qd.func
@@ -3482,10 +3572,13 @@ def func_update_contact_force(
 
             force = qd.Vector.zero(gs.qd_float, 3)
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
+            # Sliding (pyramidal 4-edge) contributes to contact linear force.
+            # Torsional rows (offset 4, 5) contribute torque only and are not included here.
+            i_row_stride = 6 if qd.static(static_rigid_sim_config.enable_torsional_friction) else 4
             for i_dir in range(4):
                 d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
                 n = d * contact_data_friction - contact_data_normal
-                force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
+                force = force + n * constraint_state.efc_force[i_c * i_row_stride + i_dir + const_start, i_b]
 
             collider_state.contact_data.force[i_c, i_b] = force
 

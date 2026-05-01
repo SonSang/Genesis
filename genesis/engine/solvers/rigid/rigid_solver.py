@@ -153,6 +153,8 @@ from .abd.accessor import (
     kernel_update_drone_propeller_vgeoms,
     kernel_set_geom_friction,
     kernel_set_geoms_friction,
+    kernel_set_geom_friction_torsional,
+    kernel_set_geoms_friction_torsional,
     kernel_adjust_link_inertia,
 )
 from .abd.diff import (
@@ -413,6 +415,7 @@ class RigidSolver(KinematicSolver):
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
             box_box_detection=self._box_box_detection,
+            enable_torsional_friction=self._options.enable_torsional_friction,
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
@@ -822,6 +825,7 @@ class RigidSolver(KinematicSolver):
                 geoms_link_idx=np.array([geom.link.idx for geom in geoms], dtype=gs.np_int),
                 geoms_type=np.array([geom.type for geom in geoms], dtype=gs.np_int),
                 geoms_friction=np.array([geom.friction for geom in geoms], dtype=gs.np_float),
+                geoms_friction_torsional=np.array([geom.friction_torsional for geom in geoms], dtype=gs.np_float),
                 geoms_sol_params=geoms_sol_params,
                 geoms_vert_start=np.array([geom.vert_start for geom in geoms], dtype=gs.np_int),
                 geoms_face_start=np.array([geom.face_start for geom in geoms], dtype=gs.np_int),
@@ -2573,6 +2577,9 @@ class RigidSolver(KinematicSolver):
     def get_geoms_friction(self, geoms_idx=None):
         return qd_to_torch(self.geoms_info.friction, geoms_idx, copy=True)
 
+    def get_geoms_friction_torsional(self, geoms_idx=None):
+        return qd_to_torch(self.geoms_info.friction_torsional, geoms_idx, copy=True)
+
     def get_AABB(self, entities_idx=None, envs_idx=None):
         from genesis.engine.couplers import LegacyCoupler
 
@@ -2615,6 +2622,23 @@ class RigidSolver(KinematicSolver):
             friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction(friction, geoms_idx, self.geoms_info, self._static_rigid_sim_config)
+
+    def set_geom_friction_torsional(self, friction_torsional, geoms_idx):
+        kernel_set_geom_friction_torsional(geoms_idx, friction_torsional, self.geoms_info)
+
+    def set_geoms_friction_torsional(self, friction_torsional, geoms_idx=None):
+        friction_torsional, geoms_idx, _ = self._sanitize_io_variables(
+            friction_torsional,
+            geoms_idx,
+            self.n_geoms,
+            "geoms_idx",
+            envs_idx=None,
+            batched=False,
+            skip_allocation=True,
+        )
+        kernel_set_geoms_friction_torsional(
+            friction_torsional, geoms_idx, self.geoms_info, self._static_rigid_sim_config
+        )
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)

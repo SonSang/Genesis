@@ -460,6 +460,14 @@ class RigidOptions(Options):
         (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
         Whether to use contact island to speed up contact resolving. Defaults to False.
+    enable_torsional_friction : bool, optional
+        Whether to add torsional (spinning) friction at contact, in addition to the default 4-edge
+        sliding pyramidal friction cone. When enabled, two extra constraint rows per contact are
+        appended to the LCP, augmenting the cone with ``|τ_n| ≤ μ_t · F_n`` (signed torque about
+        the contact normal). Per-geom torsional coefficients are taken from ``friction_torsional``
+        on ``materials.Rigid`` (or ``friction[1]`` from MJCF when ``condim >= 4``). Defaults to
+        False — the legacy 4-row pyramidal layout is preserved bit-for-bit, including the
+        ``n_constraints`` count, for backward compatibility with prior simulations.
     use_hibernation : bool, optional
         Whether to enable hibernation. Defaults to False.
     hibernation_thresh_vel : float, optional
@@ -511,6 +519,7 @@ class RigidOptions(Options):
     constraint_timeconst: PositiveFloat = 0.01
     use_contact_island: StrictBool = False
     box_box_detection: StrictBool = False
+    enable_torsional_friction: StrictBool = False
 
     # hibernation threshold
     use_hibernation: StrictBool = False

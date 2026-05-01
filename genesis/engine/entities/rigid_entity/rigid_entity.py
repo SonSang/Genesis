@@ -2022,6 +2022,9 @@ class RigidEntity(KinematicEntity):
             friction = self.material.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
+            friction_torsional = self.material.friction_torsional
+            if friction_torsional is None:
+                friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
             link._add_geom(
                 mesh=g_info["mesh"],
@@ -2029,6 +2032,7 @@ class RigidEntity(KinematicEntity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
                 type=g_info["type"],
                 friction=friction,
+                friction_torsional=friction_torsional,
                 sol_params=g_info["sol_params"],
                 data=g_info.get("data"),
                 needs_coup=needs_coup,
@@ -2283,6 +2287,9 @@ class RigidEntity(KinematicEntity):
             friction = self.material.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
+            friction_torsional = self.material.friction_torsional
+            if friction_torsional is None:
+                friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
             link._add_geom(
                 mesh=g_info["mesh"],
@@ -2290,6 +2297,7 @@ class RigidEntity(KinematicEntity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
                 type=g_info["type"],
                 friction=friction,
+                friction_torsional=friction_torsional,
                 sol_params=g_info["sol_params"],
                 data=g_info.get("data"),
                 needs_coup=needs_coup,

@@ -80,6 +80,7 @@ def func_collider_clear_env(
                     collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
                     collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
                     collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
+                    collider_state.contact_data.friction_torsional[i_c_hibernated, i_b] = collider_state.contact_data.friction_torsional[i_c, i_b]
                     collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
                     collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
                     collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
@@ -201,6 +202,8 @@ def func_add_contact(
     if i_c < collider_info.max_contact_pairs[None]:
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
+        friction_t_a = geoms_info.friction_torsional[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
+        friction_t_b = geoms_info.friction_torsional[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
         # b to a
         collider_state.contact_data.geom_a[i_c, i_b] = i_ga
@@ -209,6 +212,7 @@ def func_add_contact(
         collider_state.contact_data.pos[i_c, i_b] = contact_pos
         collider_state.contact_data.penetration[i_c, i_b] = penetration
         collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
+        collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_t_a, friction_t_b)
         collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
             geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb]
         )
@@ -243,6 +247,8 @@ def func_set_contact(
     """
     friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
     friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
+    friction_t_a = geoms_info.friction_torsional[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
+    friction_t_b = geoms_info.friction_torsional[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
     # b to a
     collider_state.contact_data.geom_a[i_c, i_b] = i_ga
@@ -251,6 +257,7 @@ def func_set_contact(
     collider_state.contact_data.pos[i_c, i_b] = contact_pos
     collider_state.contact_data.penetration[i_c, i_b] = penetration
     collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
+    collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_t_a, friction_t_b)
     collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb])
     collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
     collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
@@ -505,6 +512,7 @@ def func_clamp_and_sort_contacts(
                 tmp_normal = collider_state.contact_data.normal[i, i_b]
                 tmp_pos = collider_state.contact_data.pos[i, i_b]
                 tmp_friction = collider_state.contact_data.friction[i, i_b]
+                tmp_friction_torsional = collider_state.contact_data.friction_torsional[i, i_b]
                 tmp_sol_params = collider_state.contact_data.sol_params[i, i_b]
                 tmp_force = collider_state.contact_data.force[i, i_b]
                 tmp_link_a = collider_state.contact_data.link_a[i, i_b]
@@ -520,6 +528,9 @@ def func_clamp_and_sort_contacts(
                     collider_state.contact_data.normal[j, i_b] = collider_state.contact_data.normal[src, i_b]
                     collider_state.contact_data.pos[j, i_b] = collider_state.contact_data.pos[src, i_b]
                     collider_state.contact_data.friction[j, i_b] = collider_state.contact_data.friction[src, i_b]
+                    collider_state.contact_data.friction_torsional[j, i_b] = (
+                        collider_state.contact_data.friction_torsional[src, i_b]
+                    )
                     collider_state.contact_data.sol_params[j, i_b] = collider_state.contact_data.sol_params[src, i_b]
                     collider_state.contact_data.force[j, i_b] = collider_state.contact_data.force[src, i_b]
                     collider_state.contact_data.link_a[j, i_b] = collider_state.contact_data.link_a[src, i_b]
@@ -534,6 +545,7 @@ def func_clamp_and_sort_contacts(
                 collider_state.contact_data.normal[j, i_b] = tmp_normal
                 collider_state.contact_data.pos[j, i_b] = tmp_pos
                 collider_state.contact_data.friction[j, i_b] = tmp_friction
+                collider_state.contact_data.friction_torsional[j, i_b] = tmp_friction_torsional
                 collider_state.contact_data.sol_params[j, i_b] = tmp_sol_params
                 collider_state.contact_data.force[j, i_b] = tmp_force
                 collider_state.contact_data.link_a[j, i_b] = tmp_link_a

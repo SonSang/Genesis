@@ -2113,6 +2113,12 @@ def default_friction():
     return 1.0
 
 
+def default_friction_torsional():
+    """Default torsional friction coefficient. Set to 0 (disabled) for backward compatibility;
+    MJCF imports use the value from MuJoCo's friction[1] directly."""
+    return 0.0
+
+
 def default_dofs_kp(n=6):
     return np.full((n,), fill_value=100.0, dtype=gs.np_float)
 
