@@ -37,6 +37,14 @@ class Rigid(Kinematic["RigidEntity"]):
         Has units of length (m), in MuJoCo convention; the friction torque limit is
         ``friction_torsional * normal_force``. If None, a default of 0.0 is used (no torsional friction),
         unless overridden by an MJCF/URDF source. Corresponds to ``friction[1]`` in MuJoCo.
+
+        Practical range: values of roughly ``[0.01, 0.3]`` give well-conditioned LCP behavior in
+        the pyramidal-cone formulation. Below 1e-2 the contact-merge floor clamps the value (same
+        rule as slide friction). Above ~0.3 the augmented-direction Jacobian becomes nearly tangent
+        to the contact plane and the LCP starts to release stiction prematurely; this is a known
+        limitation of the pyramidal cone (MuJoCo's elliptic cone handles high friction better but
+        is not yet implemented in Genesis). Most rigid-body simulations stay comfortably within the
+        practical range.
     needs_coup : bool, optional
         Whether the material participates in coupling with other solvers. Default is True.
     coup_friction : float, optional

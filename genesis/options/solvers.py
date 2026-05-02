@@ -468,6 +468,10 @@ class RigidOptions(Options):
         on ``materials.Rigid`` (or ``friction[1]`` from MJCF when ``condim >= 4``). Defaults to
         False — the legacy 4-row pyramidal layout is preserved bit-for-bit, including the
         ``n_constraints`` count, for backward compatibility with prior simulations.
+
+        Like slide friction in the pyramidal cone, very small or very large ``friction_torsional``
+        values can ill-condition the LCP. See ``materials.Rigid.friction_torsional`` for the
+        recommended range; in short, keep it in roughly ``[0.01, 0.3]`` for reliable behaviour.
     use_hibernation : bool, optional
         Whether to enable hibernation. Defaults to False.
     hibernation_thresh_vel : float, optional

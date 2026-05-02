@@ -212,7 +212,14 @@ def func_add_contact(
         collider_state.contact_data.pos[i_c, i_b] = contact_pos
         collider_state.contact_data.penetration[i_c, i_b] = penetration
         collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-        collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_t_a, friction_t_b)
+        # Mirror slide's stability floor on torsional, but only when torsional is actually
+        # configured: leaves the contact at 0 (dummy row) when both surfaces opt out, and
+        # avoids the LCP instability seen at 0 < mu_t < 1e-2 with the pyramidal cone.
+        friction_t_max = qd.max(friction_t_a, friction_t_b)
+        friction_t_floored = qd.max(friction_t_max, gs.qd_float(1e-2))
+        collider_state.contact_data.friction_torsional[i_c, i_b] = (
+            friction_t_floored if friction_t_max > gs.qd_float(1e-6) else gs.qd_float(0.0)
+        )
         collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
             geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb]
         )
@@ -257,7 +264,11 @@ def func_set_contact(
     collider_state.contact_data.pos[i_c, i_b] = contact_pos
     collider_state.contact_data.penetration[i_c, i_b] = penetration
     collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-    collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_t_a, friction_t_b)
+    friction_t_max = qd.max(friction_t_a, friction_t_b)
+    friction_t_floored = qd.max(friction_t_max, gs.qd_float(1e-2))
+    collider_state.contact_data.friction_torsional[i_c, i_b] = (
+        friction_t_floored if friction_t_max > gs.qd_float(1e-6) else gs.qd_float(0.0)
+    )
     collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb])
     collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
     collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
