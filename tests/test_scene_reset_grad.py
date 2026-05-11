@@ -257,30 +257,20 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
     loss_h2_C.backward(retain_graph=True)
     grad2_C = v2C.grad.detach().clone().cpu().numpy()
 
-    # Sanity: A and C end at (approximately) the same final state.
+    # Sanity: A and C end at the same final state and produce the same loss.
     #
-    # `scene.reset(state)` only restores the fields captured in `SimState`
-    # (qpos / dofs_vel / dofs_acc / links_pos / links_quat / etc.) and re-runs
-    # position FK. Some other simulator-internal fields — adjoint caches,
-    # mass-matrix factor cache, `cd_*`, `cdd_*`, `cfrc_*` — are *not* in
-    # `SimState`. In Scene A these carry stale values from the previous
-    # horizon; in Scene C they're zero-initialized. The next forward step's
-    # kernels recompute everything that matters, but the order of reads vs.
-    # writes within a single substep means a few ulps of difference leak
-    # through. Empirically ~1e-7 max-abs drift on J4 (freejoint + revolute
-    # child) and ~1e-9 on J5 (3-link chain). A real bug would manifest as
-    # >1e-3 drift.
-    #
-    # Investigated but did not eliminate: also calling `kernel_forward_velocity`
-    # inside `set_state` (so `_is_forward_vel_updated = True` is honest) — the
-    # drift magnitude was unchanged, indicating the source is upstream of
-    # `cd_vel` (likely mass-matrix factor cache or bias/Coriolis cross-step
-    # state). Closing the gap fully would mean expanding `SimState` to cover
-    # the full simulator-internal state, which is a larger refactor.
-    assert_allclose(qpos_end_A, qpos_end_C, atol=1e-5, rtol=1e-4)
-    assert_allclose(loss_h2_A.detach().cpu().item(), loss_h2_C.detach().cpu().item(), atol=1e-5, rtol=1e-4)
-    # Core assertion: horizon-2 gradient identical up to the same ulps band.
-    assert_allclose(grad2_A, grad2_C, atol=1e-5, rtol=1e-3)
+    # `scene.reset(state)` only restores the fields captured in `SimState`,
+    # so simulator-internal caches outside `SimState` (`acc_smooth_bw`,
+    # `pos_bw`, adjoint caches, `mass_mat_L`, etc.) keep their prior-horizon
+    # values in Scene A while Scene C has them at build-time zero. The fix
+    # for the only one of these that actually matters for downstream
+    # gradient — `acc_smooth_bw`, the LDLT BW cache — is in
+    # `RigidSolver.reset_grad` (zeroed via `kernel_zero_acc_smooth_bw`).
+    # With that, A == C bit-exact up to fp64 round-off.
+    assert_allclose(qpos_end_A, qpos_end_C, atol=1e-12, rtol=1e-10)
+    assert_allclose(loss_h2_A.detach().cpu().item(), loss_h2_C.detach().cpu().item(), atol=1e-12, rtol=1e-10)
+    # Core assertion: horizon-2 gradient identical.
+    assert_allclose(grad2_A, grad2_C, atol=1e-12, rtol=1e-10)
 
 
 # ---------------------------------------------------------------------------

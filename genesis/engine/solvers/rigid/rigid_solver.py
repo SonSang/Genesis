@@ -146,6 +146,7 @@ from .abd.accessor import (
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
     kernel_set_dofs_force_grad,
+    kernel_zero_acc_smooth_bw,
     kernel_set_dofs_zero_velocity,
     kernel_set_dofs_position,
     kernel_control_dofs_force,
@@ -1265,6 +1266,13 @@ class RigidSolver(KinematicSolver):
             qd_zero_grad(self.joints_state_adjoint_cache)
             qd_zero_grad(self.geoms_state_adjoint_cache)
             qd_zero_grad(self._rigid_adjoint_cache)
+            # Zero the LDLT-solve BW-cache field VALUES (not just `.grad`).
+            # `acc_smooth_bw` is read by `func_solve_mass_entity`'s Step 2 BW
+            # path during `substep_pre_coupling_grad`'s forward replay, and
+            # leftover values from a previous horizon's backward leak into the
+            # next horizon's adstack-driven `.grad`. See
+            # `kernel_zero_acc_smooth_bw` docstring for the full chain.
+            kernel_zero_acc_smooth_bw(self.dofs_state)
 
     def _debug_grad_dump(self, tag):
         # Temporary instrumentation gated by GENESIS_DEBUG_GRAD=1. Dumps abs-max / L2-norm of
