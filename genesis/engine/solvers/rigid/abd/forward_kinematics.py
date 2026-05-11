@@ -638,6 +638,12 @@ def func_forward_kinematics_entity(
                     + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
                 )
                 pos = W(links_state.pos_bw, next_I, pos_, BW)
+                # Prismatic doesn't rotate the link, but the per-joint cache (quat_bw) still
+                # needs `next_I` populated — otherwise the final `R(quat_bw, I_jf, ...)` at the
+                # end of this function reads uninitialised memory in the backward-mode kernel,
+                # which surfaces as NaN gradients on qpos. Commit the unchanged quat to the
+                # next slot so the cache chain is contiguous through the loop iteration.
+                quat = W(links_state.quat_bw, next_I, quat, BW)
 
         # Skip link pose update for fixed root links to let users manually overwrite them
         I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
