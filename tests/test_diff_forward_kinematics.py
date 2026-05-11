@@ -58,10 +58,11 @@ _TOL = {
     # absolute mismatches (~1e-4) on entries where FD reports 0.
     ("64", "quat"): dict(rtol=2e-2, atol=1e-3, eps=1e-5),
     # fp32 batched runs (n_envs=4) accumulate ulp-level round-off across env
-    # copies, so a few entries land at ~5e-4 abs vs FD even on
-    # set_dofs_velocity → links_pos paths that are bit-clean at fp64. The
-    # default-band atol is wider than fp64's to absorb this.
-    ("32", "default"): dict(rtol=2e-2, atol=1e-3, eps=1e-3),
+    # copies, so a few entries land at ~1e-3 abs vs FD even on
+    # set_dofs_velocity → links_pos paths that are bit-clean at fp64. GPU
+    # fp32 has slightly more accumulated noise than CPU fp32 due to
+    # different op order, so the band absorbs both.
+    ("32", "default"): dict(rtol=2e-2, atol=2e-3, eps=1e-3),
     ("32", "quat"): dict(rtol=5e-2, atol=5e-3, eps=1e-3),
 }
 
@@ -354,7 +355,7 @@ def _target(shape, seed):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 def test_diff_fk_freejoint(show_viewer, n_envs, precision):
@@ -446,7 +447,7 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 def test_diff_fk_revolute(show_viewer, n_envs, precision):
@@ -498,7 +499,7 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 def test_diff_fk_prismatic(show_viewer, n_envs, precision):
@@ -538,7 +539,7 @@ def test_diff_fk_prismatic(show_viewer, n_envs, precision):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision):
@@ -621,7 +622,7 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision):

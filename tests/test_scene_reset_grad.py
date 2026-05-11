@@ -227,6 +227,7 @@ def _read_qpos(scene) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision_str", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 @pytest.mark.parametrize("mjcf_str, n_dofs", _TOPOLOGIES)
@@ -312,6 +313,7 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs, n_envs,
 
 
 @pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_reset_grad_preserves_state():
     """`scene.reset_grad()` must not touch qpos / vel / time counters."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
@@ -335,6 +337,7 @@ def test_reset_grad_preserves_state():
 
 
 @pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_reset_grad_zeros_internal_grad_fields():
     """`scene.reset_grad()` zeros the solver's `.grad` fields and adjoint caches."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
@@ -376,6 +379,7 @@ def test_reset_grad_zeros_internal_grad_fields():
 
 
 @pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_reset_grad_clears_queried_states():
     """`scene.reset_grad()` clears the simulator's `_queried_states` cache."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
@@ -398,6 +402,7 @@ def test_reset_grad_clears_queried_states():
 
 
 @pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_reset_grad_idempotent():
     """Calling `scene.reset_grad()` twice is safe (second call is a no-op)."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
