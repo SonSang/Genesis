@@ -995,6 +995,24 @@ class Scene(RBC):
     def _reset_grad(self):
         self._backward_ready = True
 
+    @gs.assert_built
+    def reset_grad(self):
+        """Clear gradient buffers without resetting physics state.
+
+        Use this between training horizons in differentiable RL (e.g. SHAC)
+        when you want to detach the gradient tape but keep simulating from
+        the current state.
+
+        Concretely:
+        - Each solver's `reset_grad()` zeros its internal `.grad` fields and
+          adjoint caches (e.g. `dofs_state_adjoint_cache`).
+        - The scene's `_queried_states` list is cleared (frees memory and
+          prevents stale state references from continuing into the next horizon).
+        - The current physics state (`qpos`, `vel`, etc.) is *not* touched.
+        """
+        self._sim.reset_grad()
+        self._reset_grad()
+
     def _get_state(self):
         return self._sim.get_state()
 
