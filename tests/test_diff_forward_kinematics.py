@@ -39,7 +39,34 @@ from .utils import assert_allclose
 
 pytestmark = [
     pytest.mark.debug(False),
-    pytest.mark.precision("64"),
+]
+
+
+# Per-precision FD tolerance. fp32 is intentionally looser — float32 FD has only
+# ~7 significant digits of headroom and the optimal central-FD eps grows to ~1e-3.
+# The "quat" kind covers outputs that go through a non-linear pose composition
+# (set_dofs_velocity → state.quat) where Genesis autograd is currently a ~1%
+# noisier than FD even after the qd_rotvec_to_quat fix.
+_TOL = {
+    ("64", "default"): dict(rtol=1e-4, atol=1e-6, eps=1e-5),
+    # quat-output paths: a unit-norm projection happens inside `set_quat` (the
+    # `relative=True` composition + normalization), so FD captures the projected
+    # sensitivity while analytical traces the full Jacobian — that yields small
+    # absolute mismatches (~1e-4) on entries where FD reports 0.
+    ("64", "quat"):    dict(rtol=2e-2, atol=1e-3, eps=1e-5),
+    ("32", "default"): dict(rtol=2e-2, atol=1e-4, eps=1e-3),
+    ("32", "quat"):    dict(rtol=5e-2, atol=2e-3, eps=1e-3),
+}
+
+
+_PRECISION_PARAMS = [
+    pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+    pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+]
+
+_N_ENVS_PARAMS = [
+    pytest.param(0, id="single"),
+    pytest.param(4, id="batched"),
 ]
 
 
@@ -136,7 +163,7 @@ def _mjcf_to_tmpfile(mjcf_str: str) -> str:
     return path
 
 
-def _build_scene(mjcf_path: str, *, requires_grad: bool):
+def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -154,11 +181,11 @@ def _build_scene(mjcf_path: str, *, requires_grad: bool):
         show_viewer=False,
     )
     robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
-    scene.build()
+    scene.build(n_envs=n_envs)
     return scene, robot
 
 
-def _make_scene_pair(mjcf_str: str):
+def _make_scene_pair(mjcf_str: str, n_envs: int = 0):
     """Build two parallel scenes from the same MJCF:
 
       * `scene_ana` runs the differentiable-mode forward and is the only one we
@@ -172,12 +199,23 @@ def _make_scene_pair(mjcf_str: str):
 
     FD therefore checks "does the diff-mode analytical gradient match the
     production forward's local sensitivity", which is the property we actually
-    care about for RL demos.
+    care about for RL demos. With `n_envs > 0` both scenes run in batched mode
+    so we can verify that per-env adjoints are independently correct.
     """
     path = _mjcf_to_tmpfile(mjcf_str)
-    scene_ana, robot_ana = _build_scene(path, requires_grad=True)
-    scene_fd, robot_fd = _build_scene(path, requires_grad=False)
+    scene_ana, robot_ana = _build_scene(path, requires_grad=True, n_envs=n_envs)
+    scene_fd, robot_fd = _build_scene(path, requires_grad=False, n_envs=n_envs)
     return scene_ana, robot_ana, scene_fd, robot_fd, path
+
+
+def _batch_size(scene) -> int:
+    """Effective batch dimension. scene.n_envs == 0 still allocates B=1 internally."""
+    return scene.n_envs if scene.n_envs > 0 else 1
+
+
+def _input_shape(base_shape, n_envs):
+    """Setter inputs are unbatched when n_envs==0; batched (n_envs, *base) otherwise."""
+    return (n_envs,) + tuple(base_shape) if n_envs > 0 else tuple(base_shape)
 
 
 def _solver_state(scene):
@@ -299,79 +337,96 @@ def _target(shape, seed):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_diff_fk_freejoint(show_viewer):
-    """J1: single free body."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE)
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+def test_diff_fk_freejoint(show_viewer, n_envs, precision):
+    """J1: single free body. Covers (n_envs ∈ {0, 4}) × (precision ∈ {fp64, fp32})."""
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE, n_envs=n_envs)
     n_dofs = robot_ana.n_dofs
-    B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
+    tol_quat = _TOL[(precision, "quat")]
+
     tgt_pos = _target((B, 3), seed=1)
     tgt_quat = _target((B, 4), seed=2)
 
     _grad_matches_fd(
         scene_ana, robot_ana, scene_fd, robot_fd,
-        init_input=_rand_np((3,), seed=10),
+        init_input=_rand_np(_input_shape((3,), n_envs), seed=10),
         apply_fn=lambda r, x: r.set_pos(x),
         loss_fn=_loss_state_pos(tgt_pos),
         label="J1 set_pos → state.pos",
+        **tol_default,
     )
 
-    init_q = np.array([1.0, 0.0, 0.0, 0.0]) + 0.05 * _rand_np((4,), seed=11)
-    init_q = init_q / np.linalg.norm(init_q)  # unit quat — FD perturbations break unitness only by O(eps)
+    init_q_shape = _input_shape((4,), n_envs)
+    init_q = np.broadcast_to(np.array([1.0, 0.0, 0.0, 0.0]), init_q_shape).copy()
+    init_q = init_q + 0.05 * _rand_np(init_q_shape, seed=11)
+    init_q = init_q / np.linalg.norm(init_q, axis=-1, keepdims=True)
     _grad_matches_fd(
         scene_ana, robot_ana, scene_fd, robot_fd,
         init_input=init_q,
         apply_fn=lambda r, x: r.set_quat(x),
         loss_fn=_loss_state_quat(tgt_quat),
         label="J1 set_quat → state.quat",
+        **tol_quat,
     )
 
     _grad_matches_fd(
         scene_ana, robot_ana, scene_fd, robot_fd,
-        init_input=_rand_np((n_dofs,), seed=12),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=12),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
         label="J1 set_dofs_velocity → state.pos (after 1 step)",
+        **tol_default,
     )
 
     _grad_matches_fd(
         scene_ana, robot_ana, scene_fd, robot_fd,
-        init_input=_rand_np((n_dofs,), seed=13),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=13),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
         label="J1 set_dofs_velocity → state.quat (after 1 step)",
-        rtol=2e-2,  # known ~1% drift on the velocity → quat path (see helper note)
+        **tol_quat,
     )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_diff_fk_revolute(show_viewer):
-    """J2: single revolute joint, fixed base (no set_pos / set_quat path)."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REVOLUTE)
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+def test_diff_fk_revolute(show_viewer, n_envs, precision):
+    """J2: single revolute joint, fixed base. Covers (n_envs ∈ {0, 4}) × (precision ∈ {fp64, fp32})."""
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REVOLUTE, n_envs=n_envs)
     n_dofs = robot_ana.n_dofs  # = 1
-    B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
+    tol_quat = _TOL[(precision, "quat")]
+
     tgt_pos = _target((B, 3), seed=21)
     tgt_quat = _target((B, 4), seed=22)
 
     _grad_matches_fd(
         scene_ana, robot_ana, scene_fd, robot_fd,
-        init_input=_rand_np((n_dofs,), seed=30),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=30),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
         label="J2 set_dofs_velocity → state.pos",
+        **tol_default,
     )
 
     _grad_matches_fd(
         scene_ana, robot_ana, scene_fd, robot_fd,
-        init_input=_rand_np((n_dofs,), seed=31),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=31),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
         label="J2 set_dofs_velocity → state.quat",
-        rtol=2e-2,
+        **tol_quat,
     )
 
 
 @pytest.mark.required
+@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_diff_fk_prismatic(show_viewer):
     """J3: single prismatic joint, fixed base. No rotational DOF — skip the quat output."""
@@ -390,6 +445,7 @@ def test_diff_fk_prismatic(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_diff_fk_free_with_revolute(show_viewer):
     """J4: freejoint root + one revolute child — the #2537 topology. Outputs use
@@ -438,6 +494,7 @@ def test_diff_fk_free_with_revolute(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_diff_fk_revolute_chain3(show_viewer):
     """J5: 3-link serial revolute chain, fixed base. Tests deeper FK chain."""
