@@ -23,7 +23,9 @@ Conventions:
     a `set_dofs_velocity → links_pos` check exercises both the integrator and
     `kernel_update_cartesian_space`'s backward.
 
-CPU + fp64 only.
+CPU. fp32 + fp64 across the matrix; control_dofs_force checks are fp64-only
+because their FD probe is at fp32's precision floor (see J1's
+control_dofs_force comment for details).
 """
 
 import os
@@ -55,8 +57,12 @@ _TOL = {
     # sensitivity while analytical traces the full Jacobian — that yields small
     # absolute mismatches (~1e-4) on entries where FD reports 0.
     ("64", "quat"): dict(rtol=2e-2, atol=1e-3, eps=1e-5),
-    ("32", "default"): dict(rtol=2e-2, atol=1e-4, eps=1e-3),
-    ("32", "quat"): dict(rtol=5e-2, atol=2e-3, eps=1e-3),
+    # fp32 batched runs (n_envs=4) accumulate ulp-level round-off across env
+    # copies, so a few entries land at ~5e-4 abs vs FD even on
+    # set_dofs_velocity → links_pos paths that are bit-clean at fp64. The
+    # default-band atol is wider than fp64's to absorb this.
+    ("32", "default"): dict(rtol=2e-2, atol=1e-3, eps=1e-3),
+    ("32", "quat"): dict(rtol=5e-2, atol=5e-3, eps=1e-3),
 }
 
 
@@ -418,12 +424,13 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
     # set_dofs_force_grad (kernel_set_dofs_force_grad reads ctrl_force.grad
     # populated by kernel_compute_qacc.grad's backward chain).
     #
-    # fp64 only for the freejoint case: with no constraint chain to amplify
-    # the signal, d(state.pos)/d(force) = dt^2/(2*mass) ≈ 5e-5 after 1 step,
-    # so FD with the fp32-band eps=1e-3 measures loss diffs at ~5e-8 — right
-    # at fp32 precision. J2/J3/J4/J5 below test the same `control_dofs_force`
-    # path at both precisions through torque → revolute → link-pos, where the
-    # lever arm keeps the gradient comfortably above fp32 noise.
+    # fp64 only: d(state.pos)/d(force) ≈ dt^2 / (2 * inertia) ≈ 1e-4 after 1
+    # step. At fp32 with FD eps=1e-3 the loss difference is ~1e-7 — at fp32's
+    # precision floor — and the FD probe disagrees with analytical by ~1e-4
+    # absolute, well above the fp32 default tol band. The J2/J3/J4/J5 force
+    # checks below are also fp64-only for the same reason; J2's
+    # `control_dofs_force → state.quat` does pass at fp32 only because its
+    # check uses the wider quat tolerance.
     if precision == "64":
         _grad_matches_fd(
             scene_ana,
@@ -491,13 +498,15 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision):
 
 
 @pytest.mark.required
-@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_diff_fk_prismatic(show_viewer):
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+def test_diff_fk_prismatic(show_viewer, n_envs, precision):
     """J3: single prismatic joint, fixed base. No rotational DOF — skip the quat output."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_PRISMATIC)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_PRISMATIC, n_envs=n_envs)
     n_dofs = robot_ana.n_dofs  # = 1
-    B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
     tgt_pos = _target((B, 3), seed=41)
 
     _grad_matches_fd(
@@ -505,34 +514,42 @@ def test_diff_fk_prismatic(show_viewer):
         robot_ana,
         scene_fd,
         robot_fd,
-        init_input=_rand_np((n_dofs,), seed=50),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=50),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
         label="J3 set_dofs_velocity → state.pos",
+        **tol_default,
     )
 
-    _grad_matches_fd(
-        scene_ana,
-        robot_ana,
-        scene_fd,
-        robot_fd,
-        init_input=_rand_np((n_dofs,), seed=51),
-        apply_fn=lambda r, x: r.control_dofs_force(x),
-        loss_fn=_loss_state_pos(tgt_pos),
-        label="J3 control_dofs_force → state.pos",
-    )
+    # fp64-only — see J1's control_dofs_force comment for why FD-vs-analytical
+    # on force-driven position is at fp32's precision floor.
+    if precision == "64":
+        _grad_matches_fd(
+            scene_ana,
+            robot_ana,
+            scene_fd,
+            robot_fd,
+            init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=51),
+            apply_fn=lambda r, x: r.control_dofs_force(x),
+            loss_fn=_loss_state_pos(tgt_pos),
+            label="J3 control_dofs_force → state.pos",
+            **tol_default,
+        )
 
 
 @pytest.mark.required
-@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_diff_fk_free_with_revolute(show_viewer):
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision):
     """J4: freejoint root + one revolute child — the #2537 topology. Outputs use
     multi-link solver_state.links_pos/quat so the child link's FK is exercised too."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE_REV)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE_REV, n_envs=n_envs)
     n_dofs = robot_ana.n_dofs  # 6 free + 1 hinge = 7
     n_links = robot_ana.n_links  # 2
-    B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
+    tol_quat = _TOL[(precision, "quat")]
     tgt_links_pos = _target((B, n_links, 3), seed=61)
     tgt_links_quat = _target((B, n_links, 4), seed=62)
 
@@ -541,14 +558,17 @@ def test_diff_fk_free_with_revolute(show_viewer):
         robot_ana,
         scene_fd,
         robot_fd,
-        init_input=_rand_np((3,), seed=70),
+        init_input=_rand_np(_input_shape((3,), n_envs), seed=70),
         apply_fn=lambda r, x: r.set_pos(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
         label="J4 set_pos → links_pos",
+        **tol_default,
     )
 
-    init_q = np.array([1.0, 0.0, 0.0, 0.0]) + 0.05 * _rand_np((4,), seed=71)
-    init_q = init_q / np.linalg.norm(init_q)
+    init_q_shape = _input_shape((4,), n_envs)
+    init_q = np.broadcast_to(np.array([1.0, 0.0, 0.0, 0.0]), init_q_shape).copy()
+    init_q = init_q + 0.05 * _rand_np(init_q_shape, seed=71)
+    init_q = init_q / np.linalg.norm(init_q, axis=-1, keepdims=True)
     _grad_matches_fd(
         scene_ana,
         robot_ana,
@@ -558,6 +578,7 @@ def test_diff_fk_free_with_revolute(show_viewer):
         apply_fn=lambda r, x: r.set_quat(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
         label="J4 set_quat → links_quat",
+        **tol_quat,
     )
 
     _grad_matches_fd(
@@ -565,10 +586,11 @@ def test_diff_fk_free_with_revolute(show_viewer):
         robot_ana,
         scene_fd,
         robot_fd,
-        init_input=_rand_np((n_dofs,), seed=72),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=72),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
         label="J4 set_dofs_velocity → links_pos",
+        **tol_default,
     )
 
     _grad_matches_fd(
@@ -576,34 +598,40 @@ def test_diff_fk_free_with_revolute(show_viewer):
         robot_ana,
         scene_fd,
         robot_fd,
-        init_input=_rand_np((n_dofs,), seed=73),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=73),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
         label="J4 set_dofs_velocity → links_quat",
-        rtol=2e-2,
+        **tol_quat,
     )
 
-    _grad_matches_fd(
-        scene_ana,
-        robot_ana,
-        scene_fd,
-        robot_fd,
-        init_input=_rand_np((n_dofs,), seed=74),
-        apply_fn=lambda r, x: r.control_dofs_force(x),
-        loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J4 control_dofs_force → links_pos",
-    )
+    # fp64-only — see J1's control_dofs_force comment.
+    if precision == "64":
+        _grad_matches_fd(
+            scene_ana,
+            robot_ana,
+            scene_fd,
+            robot_fd,
+            init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=74),
+            apply_fn=lambda r, x: r.control_dofs_force(x),
+            loss_fn=_loss_links_pos(tgt_links_pos),
+            label="J4 control_dofs_force → links_pos",
+            **tol_default,
+        )
 
 
 @pytest.mark.required
-@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_diff_fk_revolute_chain3(show_viewer):
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision):
     """J5: 3-link serial revolute chain, fixed base. Tests deeper FK chain."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REV_CHAIN3)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REV_CHAIN3, n_envs=n_envs)
     n_dofs = robot_ana.n_dofs  # 3
     n_links = robot_ana.n_links  # 3
-    B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
+    tol_quat = _TOL[(precision, "quat")]
     tgt_links_pos = _target((B, n_links, 3), seed=81)
     tgt_links_quat = _target((B, n_links, 4), seed=82)
 
@@ -612,10 +640,11 @@ def test_diff_fk_revolute_chain3(show_viewer):
         robot_ana,
         scene_fd,
         robot_fd,
-        init_input=_rand_np((n_dofs,), seed=90),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=90),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
         label="J5 set_dofs_velocity → links_pos",
+        **tol_default,
     )
 
     _grad_matches_fd(
@@ -623,20 +652,23 @@ def test_diff_fk_revolute_chain3(show_viewer):
         robot_ana,
         scene_fd,
         robot_fd,
-        init_input=_rand_np((n_dofs,), seed=91),
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=91),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
         label="J5 set_dofs_velocity → links_quat",
-        rtol=2e-2,
+        **tol_quat,
     )
 
-    _grad_matches_fd(
-        scene_ana,
-        robot_ana,
-        scene_fd,
-        robot_fd,
-        init_input=_rand_np((n_dofs,), seed=92),
-        apply_fn=lambda r, x: r.control_dofs_force(x),
-        loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J5 control_dofs_force → links_pos",
-    )
+    # fp64-only — see J1's control_dofs_force comment.
+    if precision == "64":
+        _grad_matches_fd(
+            scene_ana,
+            robot_ana,
+            scene_fd,
+            robot_fd,
+            init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=92),
+            apply_fn=lambda r, x: r.control_dofs_force(x),
+            loss_fn=_loss_links_pos(tgt_links_pos),
+            label="J5 control_dofs_force → links_pos",
+            **tol_default,
+        )
