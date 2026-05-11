@@ -1,0 +1,44 @@
+# SHAC config for CartPoleSwingUp.
+#
+# Diverged from DiffRL's `cartpole_swing_up.yaml` in two places:
+#   * `steps_num: 8`           — DiffRL paper uses H=32. Genesis's
+#     differentiable rigid backward is noisier (huge raw grad norms on long
+#     horizons), so we shorten to H=8 and let the critic bootstrap cover the
+#     rest.
+#   * `actor_lr: 5e-4`         — paired with H=8 to keep updates modest while
+#     the policy is still in the "swing-and-explode" regime.
+env:
+  name: CartPoleSwingUpEnv
+  episode_length: 240
+  stochastic_init: True
+
+actor:
+  units: [64, 64]
+  activation: elu
+  stochastic: True
+  logstd_init: -1.0
+
+critic:
+  units: [64, 64]
+  activation: elu
+
+trainer:
+  max_epochs: 500
+  steps_num: 8
+  num_actors: 64
+  actor_lr: 0.0005
+  critic_lr: 0.001
+  lr_schedule: linear
+  betas: [0.7, 0.95]
+  gamma: 0.99
+  lam: 0.95
+  grad_norm: 1.0
+  truncate_grads: True
+  critic_iterations: 16
+  critic_method: td-lambda
+  num_batch: 4
+  target_critic_alpha: 0.2
+  obs_rms: True
+  save_interval: 100
+  log_interval: 5
+  seed: 0

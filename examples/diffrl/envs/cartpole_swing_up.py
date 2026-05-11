@@ -127,11 +127,17 @@ class CartPoleSwingUpEnv(GenesisDiffRLEnv):
 
     def _apply_actions(self, actions: torch.Tensor):
         # Only the cart joint is actuated. Force = action * action_strength.
-        # Pole joint takes zero force. `control_dofs_force` is `@tracked`, so
-        # the gradient flows back to `actions` via `process_input_grad` ->
-        # `_backward_from_qd` -> `set_dofs_force_grad` (which reads
-        # `ctrl_force.grad` from the simulator-side backward chain).
-        cart_force = actions[:, 0:1] * self.action_strength
+        # Pole joint takes zero force.
+        #
+        # `control_dofs_force` is @tracked, but the tracked-grad bridge only
+        # fires when the `force` tensor is a `gs.Tensor` (its
+        # `_backward_from_qd` is what reads `ctrl_force.grad` back into the
+        # autograd graph). To promote `force` to a `gs.Tensor`, we mix in a
+        # zero-valued slice of the current scene state — `__torch_function__`
+        # propagates `.scene` to the result while leaving values unchanged.
+        rigid_state = self._rigid_state()
+        scene_anchor = rigid_state.qpos[:, 0:1] * 0.0  # gs.Tensor, scene=self.scene
+        cart_force = actions[:, 0:1] * self.action_strength + scene_anchor
         pole_force = torch.zeros_like(cart_force)
         force = torch.cat([cart_force, pole_force], dim=-1)
         self.robot.control_dofs_force(force)
