@@ -25,6 +25,7 @@ Conventions:
 
 CPU + fp64 only.
 """
+
 import os
 import tempfile
 
@@ -53,9 +54,9 @@ _TOL = {
     # `relative=True` composition + normalization), so FD captures the projected
     # sensitivity while analytical traces the full Jacobian — that yields small
     # absolute mismatches (~1e-4) on entries where FD reports 0.
-    ("64", "quat"):    dict(rtol=2e-2, atol=1e-3, eps=1e-5),
+    ("64", "quat"): dict(rtol=2e-2, atol=1e-3, eps=1e-5),
     ("32", "default"): dict(rtol=2e-2, atol=1e-4, eps=1e-3),
-    ("32", "quat"):    dict(rtol=5e-2, atol=2e-3, eps=1e-3),
+    ("32", "quat"): dict(rtol=5e-2, atol=2e-3, eps=1e-3),
 }
 
 
@@ -230,9 +231,9 @@ def _grad_matches_fd(
     robot_ana,
     scene_fd,
     robot_fd,
-    init_input,            # 1-D numpy array (fp64)
-    apply_fn,              # callable(robot, x): apply x via a @tracked setter
-    loss_fn,               # callable(scene, robot) -> scalar tensor
+    init_input,  # 1-D numpy array (fp64)
+    apply_fn,  # callable(robot, x): apply x via a @tracked setter
+    loss_fn,  # callable(scene, robot) -> scalar tensor
     *,
     label: str,
     rtol: float = 1e-4,
@@ -284,8 +285,11 @@ def _grad_matches_fd(
         fd_grad.reshape(-1)[i] = (loss_p - loss_m) / (2.0 * eps)
 
     assert_allclose(
-        torch.from_numpy(ana_grad), torch.from_numpy(fd_grad),
-        rtol=rtol, atol=atol, err_msg=f"[{label}] FD vs analytical mismatch",
+        torch.from_numpy(ana_grad),
+        torch.from_numpy(fd_grad),
+        rtol=rtol,
+        atol=atol,
+        err_msg=f"[{label}] FD vs analytical mismatch",
     )
 
 
@@ -295,29 +299,37 @@ def _grad_matches_fd(
 # don't trip torch broadcasting.
 def _loss_state_pos(target):
     flat = target.reshape(-1)
+
     def _fn(scene, robot):
         return ((robot.get_state().pos.reshape(-1) - flat) ** 2).sum()
+
     return _fn
 
 
 def _loss_state_quat(target):
     flat = target.reshape(-1)
+
     def _fn(scene, robot):
         return ((robot.get_state().quat.reshape(-1) - flat) ** 2).sum()
+
     return _fn
 
 
 def _loss_links_pos(target):
     flat = target.reshape(-1)
+
     def _fn(scene, robot):
         return ((_solver_state(scene).links_pos.reshape(-1) - flat) ** 2).sum()
+
     return _fn
 
 
 def _loss_links_quat(target):
     flat = target.reshape(-1)
+
     def _fn(scene, robot):
         return ((_solver_state(scene).links_quat.reshape(-1) - flat) ** 2).sum()
+
     return _fn
 
 
@@ -351,7 +363,10 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
     tgt_quat = _target((B, 4), seed=2)
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np(_input_shape((3,), n_envs), seed=10),
         apply_fn=lambda r, x: r.set_pos(x),
         loss_fn=_loss_state_pos(tgt_pos),
@@ -364,7 +379,10 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
     init_q = init_q + 0.05 * _rand_np(init_q_shape, seed=11)
     init_q = init_q / np.linalg.norm(init_q, axis=-1, keepdims=True)
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=init_q,
         apply_fn=lambda r, x: r.set_quat(x),
         loss_fn=_loss_state_quat(tgt_quat),
@@ -373,7 +391,10 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
     )
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=12),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
@@ -382,13 +403,39 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
     )
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=13),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
         label="J1 set_dofs_velocity → state.quat (after 1 step)",
         **tol_quat,
     )
+
+    # control_dofs_force is @tracked: gradient flows back via
+    # set_dofs_force_grad (kernel_set_dofs_force_grad reads ctrl_force.grad
+    # populated by kernel_compute_qacc.grad's backward chain).
+    #
+    # fp64 only for the freejoint case: with no constraint chain to amplify
+    # the signal, d(state.pos)/d(force) = dt^2/(2*mass) ≈ 5e-5 after 1 step,
+    # so FD with the fp32-band eps=1e-3 measures loss diffs at ~5e-8 — right
+    # at fp32 precision. J2/J3/J4/J5 below test the same `control_dofs_force`
+    # path at both precisions through torque → revolute → link-pos, where the
+    # lever arm keeps the gradient comfortably above fp32 noise.
+    if precision == "64":
+        _grad_matches_fd(
+            scene_ana,
+            robot_ana,
+            scene_fd,
+            robot_fd,
+            init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=14),
+            apply_fn=lambda r, x: r.control_dofs_force(x),
+            loss_fn=_loss_state_pos(tgt_pos),
+            label="J1 control_dofs_force → state.pos (after 1 step)",
+            **tol_default,
+        )
 
 
 @pytest.mark.required
@@ -407,7 +454,10 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision):
     tgt_quat = _target((B, 4), seed=22)
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=30),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
@@ -416,11 +466,26 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision):
     )
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=31),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
         label="J2 set_dofs_velocity → state.quat",
+        **tol_quat,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=32),
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=_loss_state_quat(tgt_quat),
+        label="J2 control_dofs_force → state.quat",
         **tol_quat,
     )
 
@@ -436,11 +501,25 @@ def test_diff_fk_prismatic(show_viewer):
     tgt_pos = _target((B, 3), seed=41)
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np((n_dofs,), seed=50),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
         label="J3 set_dofs_velocity → state.pos",
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np((n_dofs,), seed=51),
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=_loss_state_pos(tgt_pos),
+        label="J3 control_dofs_force → state.pos",
     )
 
 
@@ -451,14 +530,17 @@ def test_diff_fk_free_with_revolute(show_viewer):
     """J4: freejoint root + one revolute child — the #2537 topology. Outputs use
     multi-link solver_state.links_pos/quat so the child link's FK is exercised too."""
     scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE_REV)
-    n_dofs = robot_ana.n_dofs    # 6 free + 1 hinge = 7
+    n_dofs = robot_ana.n_dofs  # 6 free + 1 hinge = 7
     n_links = robot_ana.n_links  # 2
     B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
     tgt_links_pos = _target((B, n_links, 3), seed=61)
     tgt_links_quat = _target((B, n_links, 4), seed=62)
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np((3,), seed=70),
         apply_fn=lambda r, x: r.set_pos(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
@@ -468,7 +550,10 @@ def test_diff_fk_free_with_revolute(show_viewer):
     init_q = np.array([1.0, 0.0, 0.0, 0.0]) + 0.05 * _rand_np((4,), seed=71)
     init_q = init_q / np.linalg.norm(init_q)
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=init_q,
         apply_fn=lambda r, x: r.set_quat(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
@@ -476,7 +561,10 @@ def test_diff_fk_free_with_revolute(show_viewer):
     )
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np((n_dofs,), seed=72),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
@@ -484,12 +572,26 @@ def test_diff_fk_free_with_revolute(show_viewer):
     )
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np((n_dofs,), seed=73),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
         label="J4 set_dofs_velocity → links_quat",
         rtol=2e-2,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np((n_dofs,), seed=74),
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=_loss_links_pos(tgt_links_pos),
+        label="J4 control_dofs_force → links_pos",
     )
 
 
@@ -499,14 +601,17 @@ def test_diff_fk_free_with_revolute(show_viewer):
 def test_diff_fk_revolute_chain3(show_viewer):
     """J5: 3-link serial revolute chain, fixed base. Tests deeper FK chain."""
     scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REV_CHAIN3)
-    n_dofs = robot_ana.n_dofs    # 3
+    n_dofs = robot_ana.n_dofs  # 3
     n_links = robot_ana.n_links  # 3
     B = scene_ana.n_envs if scene_ana.n_envs > 0 else 1
     tgt_links_pos = _target((B, n_links, 3), seed=81)
     tgt_links_quat = _target((B, n_links, 4), seed=82)
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np((n_dofs,), seed=90),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
@@ -514,10 +619,24 @@ def test_diff_fk_revolute_chain3(show_viewer):
     )
 
     _grad_matches_fd(
-        scene_ana, robot_ana, scene_fd, robot_fd,
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
         init_input=_rand_np((n_dofs,), seed=91),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
         label="J5 set_dofs_velocity → links_quat",
         rtol=2e-2,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np((n_dofs,), seed=92),
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=_loss_links_pos(tgt_links_pos),
+        label="J5 control_dofs_force → links_pos",
     )
