@@ -109,28 +109,27 @@ def qd_rotvec_to_R(rotvec, eps):
 
 @qd.func
 def qd_rotvec_to_quat(rotvec, eps):
-    quat = qd.Vector.zero(gs.qd_float, 4)
-
-    # We need to use [norm_sqr] instead of [norm] to avoid nan gradients in the backward pass. Even when theta = 0,
-    # the gradient of [norm] operation is computed and used (note that the gradient becomes NaN when theta = 0). This
-    # is seemd to be a bug in Quadrants autodiff @TODO: change back after the bug is fixed.
+    # Branch-free, division-stable rewrite of axis-angle -> quaternion. The previous form
+    # branched on `thetasq > eps**2` and divided `sin(theta/2) / theta` directly. Both the
+    # dynamic branch and the bare division silently dropped the reverse-mode chain inside
+    # `kernel_update_cartesian_space.grad` for any revolute joint (qpos.grad came out 0
+    # while finite-diff said otherwise — see tests/test_diff_forward_kinematics.py::J2).
+    #
+    # With `theta_reg = sqrt(thetasq + eps**2)` the denominator is strictly positive and
+    # `sin(theta_reg/2)/theta_reg` is a smooth function of `thetasq` everywhere, so the
+    # adstack pipeline does not need to negotiate a branch or a 0/0. In fp64 with the
+    # default `eps ~ 1e-15`, the regularization bias on the resulting quat is below
+    # round-off (eps**2 ~ 1e-30 added to thetasq), and the analytic norm is unit to the
+    # same order — the original first-order renormalization is therefore dropped.
     thetasq = rotvec.norm_sqr()
-    if thetasq > (eps**2):
-        theta = qd.sqrt(thetasq)
-        theta_half = 0.5 * theta
-        c, s = qd.cos(theta_half), qd.sin(theta_half)
-
-        quat[0] = c
-        xyz = s / theta * rotvec
-        for i in qd.static(range(3)):
-            quat[i + 1] = xyz[i]
-
-        # First order quaternion normalization is accurate enough yet necessary
-        quat *= 0.5 * (3.0 - quat.norm_sqr())
-    else:
-        quat[0] = 1.0
-
-    return quat
+    theta_reg = qd.sqrt(thetasq + eps * eps)
+    theta_half = 0.5 * theta_reg
+    c = qd.cos(theta_half)
+    sinc_half = qd.sin(theta_half) / theta_reg
+    return qd.Vector(
+        [c, sinc_half * rotvec[0], sinc_half * rotvec[1], sinc_half * rotvec[2]],
+        dt=gs.qd_float,
+    )
 
 
 @qd.func
