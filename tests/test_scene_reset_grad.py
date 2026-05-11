@@ -260,14 +260,23 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
     # Sanity: A and C end at (approximately) the same final state.
     #
     # `scene.reset(state)` only restores the fields captured in `SimState`
-    # (qpos / dofs_vel / dofs_acc / links_pos / links_quat / etc.). Derived
-    # quantities like `cd_vel`, `cdofd_*`, `qf_*` that are recomputed each
-    # forward step still carry stale values from before the reset — in Scene A
-    # those values come from the unwind after backward, in Scene C they come
-    # from build-time zero-init. The next forward step recomputes them
-    # correctly, but if any of them is read *before* the recompute (e.g., in
-    # the first substep's bias-force chain), a few ulps of difference seep in.
-    # ~1e-6 drift is consistent with this; >1e-3 would indicate a real bug.
+    # (qpos / dofs_vel / dofs_acc / links_pos / links_quat / etc.) and re-runs
+    # position FK. Some other simulator-internal fields — adjoint caches,
+    # mass-matrix factor cache, `cd_*`, `cdd_*`, `cfrc_*` — are *not* in
+    # `SimState`. In Scene A these carry stale values from the previous
+    # horizon; in Scene C they're zero-initialized. The next forward step's
+    # kernels recompute everything that matters, but the order of reads vs.
+    # writes within a single substep means a few ulps of difference leak
+    # through. Empirically ~1e-7 max-abs drift on J4 (freejoint + revolute
+    # child) and ~1e-9 on J5 (3-link chain). A real bug would manifest as
+    # >1e-3 drift.
+    #
+    # Investigated but did not eliminate: also calling `kernel_forward_velocity`
+    # inside `set_state` (so `_is_forward_vel_updated = True` is honest) — the
+    # drift magnitude was unchanged, indicating the source is upstream of
+    # `cd_vel` (likely mass-matrix factor cache or bias/Coriolis cross-step
+    # state). Closing the gap fully would mean expanding `SimState` to cover
+    # the full simulator-internal state, which is a larger refactor.
     assert_allclose(qpos_end_A, qpos_end_C, atol=1e-5, rtol=1e-4)
     assert_allclose(loss_h2_A.detach().cpu().item(), loss_h2_C.detach().cpu().item(), atol=1e-5, rtol=1e-4)
     # Core assertion: horizon-2 gradient identical up to the same ulps band.
