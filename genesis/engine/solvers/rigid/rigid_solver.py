@@ -145,6 +145,7 @@ from .abd.accessor import (
     kernel_set_dofs_limit,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_force_grad,
     kernel_set_dofs_zero_velocity,
     kernel_set_dofs_position,
     kernel_control_dofs_force,

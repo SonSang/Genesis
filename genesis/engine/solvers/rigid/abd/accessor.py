@@ -788,6 +788,26 @@ def kernel_set_dofs_zero_velocity(
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_dofs_force_grad(
+    force_grad: qd.types.ndarray(),
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    dofs_state: array_class.DofsState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Read the simulator-side `ctrl_force.grad` into a torch ndarray and zero it.
+
+    Used by the @tracked `control_dofs_force` -> `process_input_grad` chain so
+    the actor's gradient through `force = f(action, state)` can flow back to
+    `action` after `kernel_compute_qacc.grad` populates `ctrl_force.grad`.
+    """
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+        force_grad[i_b_, i_d_] = dofs_state.ctrl_force.grad[dofs_idx[i_d_], envs_idx[i_b_]]
+        dofs_state.ctrl_force.grad[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_position(
     position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
