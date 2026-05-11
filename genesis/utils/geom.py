@@ -121,7 +121,9 @@ def qd_rotvec_to_quat(rotvec, eps):
     # default `eps ~ 1e-15`, the regularization bias on the resulting quat is below
     # round-off (eps**2 ~ 1e-30 added to thetasq), and the analytic norm is unit to the
     # same order — the original first-order renormalization is therefore dropped.
-    thetasq = rotvec.norm_sqr()
+    # DEBUG: replace `rotvec.norm_sqr()` with explicit sum to test if `.norm_sqr()`'s
+    # reverse-mode AD has a sign bug.
+    thetasq = rotvec[0] * rotvec[0] + rotvec[1] * rotvec[1] + rotvec[2] * rotvec[2]
     theta_reg = qd.sqrt(thetasq + eps * eps)
     theta_half = 0.5 * theta_reg
     c = qd.cos(theta_half)
@@ -233,11 +235,12 @@ def qd_quat_mul_axis(q, axis):
 
 @qd.func
 def qd_quat_mul(u, v):
-    vu = u.outer_product(v)
-    w = vu[0, 0] - vu[1, 1] - vu[2, 2] - vu[3, 3]
-    x = vu[0, 1] + vu[1, 0] + vu[2, 3] - vu[3, 2]
-    y = vu[0, 2] - vu[1, 3] + vu[2, 0] + vu[3, 1]
-    z = vu[0, 3] + vu[1, 2] - vu[2, 1] + vu[3, 0]
+    # DEBUG: bypass `u.outer_product(v)` in case its reverse-mode AD has a sign bug for the
+    # quat-product pattern.
+    w = u[0] * v[0] - u[1] * v[1] - u[2] * v[2] - u[3] * v[3]
+    x = u[0] * v[1] + u[1] * v[0] + u[2] * v[3] - u[3] * v[2]
+    y = u[0] * v[2] - u[1] * v[3] + u[2] * v[0] + u[3] * v[1]
+    z = u[0] * v[3] + u[1] * v[2] - u[2] * v[1] + u[3] * v[0]
     return qd.Vector([w, x, y, z], dt=gs.qd_float)
 
 
@@ -247,26 +250,43 @@ def qd_transform_quat_by_quat(v, u):
 
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
-    vec = qd_quat_mul(u, v)
-    return vec.normalized()
+    # `.normalized()` is a tangent-space projection in reverse-mode AD and attenuates the
+    # chain through the w-direction at near-identity quats. For unit-norm inputs the product
+    # is unit up to round-off, so the bare quat product is numerically equivalent forward
+    # but doesn't project the backward chain.
+    return qd_quat_mul(u, v)
 
 
 @qd.func
 def qd_transform_by_quat(v, quat):
-    q_w, q_x, q_y, q_z = quat
-    q_xx, q_xy, q_xz, q_wx = q_x * q_x, q_x * q_y, q_x * q_z, q_x * q_w
-    q_yy, q_yz, q_wy = q_y * q_y, q_y * q_z, q_y * q_w
-    q_zz, q_wz = q_z * q_z, q_z * q_w
+    # DEBUG: replace tuple-unpacking + .x/.y/.z swizzle with explicit indexing in case
+    # those backward through qd.Vector drop the q_x adjoint contribution.
+    q_w = quat[0]
+    q_x = quat[1]
+    q_y = quat[2]
+    q_z = quat[3]
+    v0 = v[0]
+    v1 = v[1]
+    v2 = v[2]
+    q_xx = q_x * q_x
+    q_xy = q_x * q_y
+    q_xz = q_x * q_z
+    q_wx = q_x * q_w
+    q_yy = q_y * q_y
+    q_yz = q_y * q_z
+    q_wy = q_y * q_w
+    q_zz = q_z * q_z
+    q_wz = q_z * q_w
     q_ww = q_w * q_w
 
     return qd.Vector(
         [
-            v.x * (q_xx + q_ww - q_yy - q_zz) + v.y * (2.0 * q_xy - 2.0 * q_wz) + v.z * (2.0 * q_xz + 2.0 * q_wy),
-            v.x * (2.0 * q_wz + 2.0 * q_xy) + v.y * (q_ww - q_xx + q_yy - q_zz) + v.z * (-2.0 * q_wx + 2.0 * q_yz),
-            v.x * (-2.0 * q_wy + 2.0 * q_xz) + v.y * (2.0 * q_wx + 2.0 * q_yz) + v.z * (q_ww - q_xx - q_yy + q_zz),
+            v0 * (q_xx + q_ww - q_yy - q_zz) + v1 * (2.0 * q_xy - 2.0 * q_wz) + v2 * (2.0 * q_xz + 2.0 * q_wy),
+            v0 * (2.0 * q_wz + 2.0 * q_xy) + v1 * (q_ww - q_xx + q_yy - q_zz) + v2 * (-2.0 * q_wx + 2.0 * q_yz),
+            v0 * (-2.0 * q_wy + 2.0 * q_xz) + v1 * (2.0 * q_wx + 2.0 * q_yz) + v2 * (q_ww - q_xx - q_yy + q_zz),
         ],
         dt=gs.qd_float,
-    ) / (q_ww + q_xx + q_yy + q_zz)
+    )
 
 
 @qd.func

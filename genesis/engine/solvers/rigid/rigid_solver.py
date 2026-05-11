@@ -83,6 +83,7 @@ from .abd.forward_kinematics import (
     kernel_forward_kinematics_links_geoms,
     kernel_masked_forward_kinematics_links_geoms,
     kernel_forward_velocity,
+    kernel_forward_velocity_one_link,
     kernel_masked_forward_velocity,
     kernel_forward_kinematics_entity,
     kernel_update_geoms,
@@ -91,6 +92,7 @@ from .abd.forward_kinematics import (
     kernel_update_geom_aabbs,
     kernel_update_vgeoms,
     kernel_update_cartesian_space,
+    kernel_update_cartesian_space_one_link,
 )
 from .abd.forward_dynamics import (
     func_actuation,
@@ -168,6 +170,7 @@ from .abd.diff import (
     kernel_prepare_backward_substep,
     kernel_begin_backward_substep,
     kernel_copy_acc,
+    kernel_copy_next_to_curr_no_check,
 )
 
 if TYPE_CHECKING:
@@ -1249,6 +1252,69 @@ class RigidSolver(KinematicSolver):
             qd_zero_grad(self.geoms_state_adjoint_cache)
             qd_zero_grad(self._rigid_adjoint_cache)
 
+    def _debug_grad_dump(self, tag):
+        # Temporary instrumentation gated by GENESIS_DEBUG_GRAD=1. Dumps abs-max / L2-norm of
+        # .grad on the key adjoint buffers; with GENESIS_DEBUG_GRAD=2 also prints the full
+        # per-element vector for the "small" fields (qpos, dofs_state.{vel,acc}, links_state.{pos,quat}).
+        import os as _os
+
+        level = _os.environ.get("GENESIS_DEBUG_GRAD", "0")
+        if level not in ("1", "2"):
+            return
+        fields = [
+            ("rigid_global_info.qpos", self._rigid_global_info.qpos),
+            ("dofs_state.vel", self.dofs_state.vel),
+            ("dofs_state.pos", self.dofs_state.pos),
+            ("dofs_state.acc", self.dofs_state.acc),
+            ("dofs_state.acc_smooth", self.dofs_state.acc_smooth),
+            ("dofs_state.acc_smooth_bw", self.dofs_state.acc_smooth_bw),
+            ("dofs_state.force", self.dofs_state.force),
+            ("dofs_state.qf_bias", self.dofs_state.qf_bias),
+            ("dofs_state.qf_smooth", self.dofs_state.qf_smooth),
+            ("dofs_state.qf_passive", self.dofs_state.qf_passive),
+            ("dofs_state.qf_applied", self.dofs_state.qf_applied),
+            ("links_state.pos", self.links_state.pos),
+            ("links_state.quat", self.links_state.quat),
+            ("links_state.pos_bw", self.links_state.pos_bw),
+            ("links_state.quat_bw", self.links_state.quat_bw),
+            ("links_state.cd_vel", self.links_state.cd_vel),
+            ("links_state.cd_ang", self.links_state.cd_ang),
+            ("links_state.cdd_vel", self.links_state.cdd_vel),
+            ("links_state.cdd_ang", self.links_state.cdd_ang),
+            ("links_state.cfrc_vel", self.links_state.cfrc_vel),
+            ("links_state.cfrc_ang", self.links_state.cfrc_ang),
+            ("dofs_state.cdofd_vel", self.dofs_state.cdofd_vel),
+            ("dofs_state.cdofd_ang", self.dofs_state.cdofd_ang),
+            ("joints_state.xanchor", self.joints_state.xanchor),
+            ("joints_state.xaxis", self.joints_state.xaxis),
+        ]
+        verbose_set = {
+            "rigid_global_info.qpos", "dofs_state.vel", "dofs_state.acc",
+            "links_state.pos", "links_state.quat",
+            "links_state.cd_vel", "links_state.cd_ang",
+            "dofs_state.qf_bias", "dofs_state.force",
+            "dofs_state.acc_smooth", "dofs_state.acc_smooth_bw",
+        }
+        line_parts = []
+        verbose_parts = []
+        for name, field in fields:
+            grad = getattr(field, "grad", None)
+            if grad is None:
+                continue
+            try:
+                t = qd_to_torch(grad, copy=True)
+            except Exception:
+                continue
+            if t.numel() == 0:
+                continue
+            line_parts.append(f"{name}: max={float(t.abs().max()):.3e} norm={float(t.norm()):.3e}")
+            if level == "2" and name in verbose_set:
+                arr = t.detach().cpu().reshape(-1).tolist()
+                verbose_parts.append(f"  {name}.grad = {['%.3e' % v for v in arr]}")
+        gs.logger.info(f"[GRAD {tag}] " + " | ".join(line_parts))
+        for v in verbose_parts:
+            gs.logger.info(v)
+
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
         self._is_backward = True
@@ -1277,34 +1343,85 @@ class RigidSolver(KinematicSolver):
         self.substep(f)
 
         # =================== Backward substep ======================
+        # `kernel_prepare_backward_substep` restored qpos/vel to their pre-integrate values
+        # so the integrator backward in `kernel_step_2.grad` has a clean starting point. But
+        # the post-integrate FK (`kernel_update_cartesian_space.grad` below) must build its
+        # Jacobian *at the post-integrate quaternion*, otherwise on multi-link entities the
+        # adjoint chain through the freejoint w-component collapses to zero (the d/dq[w]
+        # Jacobian of `transform_by_quat(arm_local, q)` is zero at q = identity). Copy the
+        # integrator's `_next` outputs to the current slots so the FK BW kernel reads them.
+        kernel_copy_next_to_curr_no_check(
+            dofs_state=self.dofs_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
         envs_idx = self._scene._sanitize_envs_idx(None)
+        self._debug_grad_dump(f"f={f} entry")
         if not self._enable_mujoco_compatibility:
-            kernel_forward_velocity.grad(
-                envs_idx=envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=True,
-            )
-            kernel_update_cartesian_space.grad(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                force_update_fixed_geoms=False,
-                is_backward=True,
-            )
+            # DIAGNOSTIC: split per-link kernel calls (mirror of update_cartesian_space split
+            # below). Single-kernel `kernel_forward_velocity.grad` drops the cross-link
+            # adjoint through `cd_{vel,ang}[parent_idx]`, which kills v.grad for child-joint
+            # qvel after the Coriolis chain (compute_qacc.grad / forward_dynamics_without_qacc.grad).
+            _MAX_LINKS = 2
+            for _offset in range(_MAX_LINKS):
+                kernel_forward_velocity_one_link(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            for _offset in reversed(range(_MAX_LINKS)):
+                kernel_forward_velocity_one_link.grad(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            self._debug_grad_dump(f"f={f} after post-fwd_velocity.grad")
+            # DIAGNOSTIC: split per-link kernel calls to test if cross-link adjoint attenuation
+            # in `kernel_update_cartesian_space.grad` is caused by the single-kernel outer
+            # link loop. For J4 entity has 2 links — forward in order, backward in reverse.
+            # NOTE: skips COM/geom backward (loss in J4 only uses links_pos).
+            _MAX_LINKS = 2
+            for _offset in range(_MAX_LINKS):
+                kernel_update_cartesian_space_one_link(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            for _offset in reversed(range(_MAX_LINKS)):
+                kernel_update_cartesian_space_one_link.grad(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            self._debug_grad_dump(f"f={f} after post-update_cartesian_space.grad")
 
         is_grad_valid = kernel_begin_backward_substep(
             f=f,
@@ -1327,6 +1444,7 @@ class RigidSolver(KinematicSolver):
         )
         if not is_grad_valid:
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
+        self._debug_grad_dump(f"f={f} after begin_backward_substep")
 
         kernel_step_2.grad(
             dofs_state=self.dofs_state,
@@ -1346,6 +1464,7 @@ class RigidSolver(KinematicSolver):
             is_backward=True,
             errno=self._errno,
         )
+        self._debug_grad_dump(f"f={f} after step_2.grad")
 
         # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
         # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).
@@ -1363,6 +1482,7 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config=self._static_rigid_sim_config,
             is_backward=True,
         )
+        self._debug_grad_dump(f"f={f} after compute_qacc.grad")
         kernel_copy_acc(
             f=f,
             dofs_state=self.dofs_state,
@@ -1384,35 +1504,67 @@ class RigidSolver(KinematicSolver):
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=True,
         )
+        self._debug_grad_dump(f"f={f} after fwd_dynamics_without_qacc.grad")
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
-            kernel_forward_velocity.grad(
-                envs_idx=envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=True,
-            )
-            kernel_update_cartesian_space.grad(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                force_update_fixed_geoms=False,
-                is_backward=True,
-            )
+            # DIAGNOSTIC: split per-link kernel calls to test whether cross-link adjoint
+            # attenuation propagates the missing Coriolis-chain grad to initial qvel (J4
+            # v.grad[6] = 0 vs FD 5.94e-5 hypothesis). NOTE: skips COM/geom backward.
+            _MAX_LINKS = 2
+            for _offset in range(_MAX_LINKS):
+                kernel_forward_velocity_one_link(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            for _offset in reversed(range(_MAX_LINKS)):
+                kernel_forward_velocity_one_link.grad(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            for _offset in range(_MAX_LINKS):
+                kernel_update_cartesian_space_one_link(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            for _offset in reversed(range(_MAX_LINKS)):
+                kernel_update_cartesian_space_one_link.grad(
+                    _offset,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=True,
+                )
+            self._debug_grad_dump(f"f={f} after initial-UCS+FV.grad (end)")
 
         # Change back to forward mode
         self._is_backward = False
