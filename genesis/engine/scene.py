@@ -997,24 +997,33 @@ class Scene(RBC):
 
     @gs.assert_built
     def reset_grad(self):
-        """Clear gradient buffers without resetting physics state.
-
-        Use this between training horizons in differentiable RL (e.g. SHAC)
-        when you want to detach the gradient tape but keep simulating from
-        the current state.
+        """Clear gradient buffers without resetting physics state or time.
 
         Concretely:
         - Each solver's `reset_grad()` zeros its internal `.grad` fields and
           adjoint caches (e.g. `dofs_state_adjoint_cache`).
-        - The scene's `_queried_states` list is cleared (frees memory and
-          prevents stale state references from continuing into the next horizon).
-        - `_forward_ready` and `_backward_ready` flags are re-armed.
-        - The simulator's substep counter is reset so the next forward starts
-          from substep 0 of a fresh adjoint checkpoint window.
-        - The current physics state (`qpos`, `vel`, etc.) is *not* touched.
+        - The simulator's `_queried_states` is cleared (frees memory and
+          prevents stale state references from leaking into the next horizon).
+        - `_forward_ready` and `_backward_ready` are re-armed so further
+          forward/backward calls succeed.
+        - Physics state (`qpos`, `vel`, etc.) and time counters
+          (`_t`, `_cur_substep_global`) are NOT touched.
+
+        Important — for SHAC-style horizon truncation, prefer
+        `scene.reset(get_state_snapshot)`. Genesis's `scene._backward()`
+        rewinds physics state to step 0 as a side-effect of unrolling the
+        adstack (a Taichi-AD memory optimization), so the SHAC pattern is:
+
+            snapshot = scene.get_state()   # before backward
+            loss.backward()                # rewinds state to step 0
+            scene.reset(snapshot)          # restores state and clears grads
+
+        `scene.reset(state)` already calls into the same grad-clearing path
+        used here, so `reset_grad()` is mainly useful for advanced flows
+        (e.g. mid-rollout tape detach without state restore) where
+        `scene.reset` isn't appropriate.
         """
         self._sim.reset_grad()
-        self._sim._cur_substep_global = 0
         self._forward_ready = True
         self._reset_grad()
 
