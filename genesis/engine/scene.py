@@ -1008,9 +1008,14 @@ class Scene(RBC):
           adjoint caches (e.g. `dofs_state_adjoint_cache`).
         - The scene's `_queried_states` list is cleared (frees memory and
           prevents stale state references from continuing into the next horizon).
+        - `_forward_ready` and `_backward_ready` flags are re-armed.
+        - The simulator's substep counter is reset so the next forward starts
+          from substep 0 of a fresh adjoint checkpoint window.
         - The current physics state (`qpos`, `vel`, etc.) is *not* touched.
         """
         self._sim.reset_grad()
+        self._sim._cur_substep_global = 0
+        self._forward_ready = True
         self._reset_grad()
 
     def _get_state(self):

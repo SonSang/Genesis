@@ -1,0 +1,28 @@
+<!-- Cartpole swing-up MJCF for Genesis diffrigid RL.
+     Ported from DiffRL's cartpole.urdf (NVlabs/DiffRL, ICLR 2022 SHAC).
+     Geometry / mass numbers identical, just expressed as MJCF and oriented
+     so Genesis's default z-up world is the rendering frame:
+
+       * cart slides along world +x (prismatic, range [-4, 4])
+       * pole hinges around world +y at the cart's body frame; the pole's
+         visual / inertial COM sit at (0, 0, 0.5) relative to the cart,
+         so theta = 0 ⇒ pole points up (+z), theta = ±pi ⇒ pole hangs down
+
+     `contype="0" conaffinity="0"` everywhere — this is a swing-up env, no
+     contact with the floor, and the cart slides along an idealized rail.
+-->
+<mujoco model="cartpole">
+  <option gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="cart" pos="0 0 0">
+      <joint name="slider" type="slide" axis="1 0 0" range="-4 4" damping="0.0"/>
+      <inertial pos="0 0 0" mass="1.0" diaginertia="1.0 1.0 1.0"/>
+      <geom name="cart_geom" type="box" size="0.25 0.25 0.1" contype="0" conaffinity="0" rgba="0 0 0.8 1"/>
+      <body name="pole" pos="0 0 0">
+        <joint name="hinge" type="hinge" axis="0 1 0" damping="0.0"/>
+        <inertial pos="0 0 0.5" mass="10.0" diaginertia="1.0 1.0 1.0"/>
+        <geom name="pole_geom" type="box" pos="0 0 0.5" size="0.025 0.025 0.5" contype="0" conaffinity="0" rgba="1 1 1 1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
