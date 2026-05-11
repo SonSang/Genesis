@@ -676,23 +676,31 @@ def func_solve_mass_entity(
         n_dofs = entities_info.n_dofs[i_e]
 
         # Step 1: Solve w st. L^T @ w = y
-        for i_d_ in range(n_dofs):
-            i_d = entity_dof_end - i_d_ - 1
-            curr_out = vec[i_d, i_b]
-            if qd.static(BW):
-                out_bw[0, i_d, i_b] = vec[i_d, i_b]
+        #
+        # In BW mode, the cross-iteration self-referential read of `out_bw[0, ...]`
+        # below was tripping a Quadrants AD limitation (the adjoint chain across
+        # outer-loop iterations dropped, see `tests/test_quadrants_self_ref_ad.py`
+        # / `notes/quadrants_cross_iter_ad_limitation.md`). Phase B works around
+        # this by running Step 1 as a sequence of single-DOF kernels in Python
+        # (`kernel_solve_mass_step1_one_dof_bw`) *outside* this function. So in
+        # BW mode we deliberately skip Step 1 here — by the time `func_compute_qacc`
+        # forward runs again inside `kernel_compute_qacc.grad`, the per-DOF kernels
+        # have already populated `out_bw[0, :, :]`. The corresponding `.grad()` of
+        # those kernels handles the reverse pass after `kernel_compute_qacc.grad`.
+        #
+        # The forward-mode path is unaffected: it uses a local `curr_out`
+        # accumulator and writes to `out` only once at the end, so Quadrants AD
+        # has no cross-iter dependency to handle.
+        if qd.static(not BW):
+            for i_d_ in range(n_dofs):
+                i_d = entity_dof_end - i_d_ - 1
+                curr_out = vec[i_d, i_b]
 
-            for j_d in range(i_d + 1, entity_dof_end):
-                # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
-                # finalized at this point, we don't need to care about AD mutation rule.
-                if qd.static(BW):
-                    out_bw[0, i_d, i_b] = (
-                        out_bw[0, i_d, i_b] - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-                    )
-                else:
+                for j_d in range(i_d + 1, entity_dof_end):
+                    # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
+                    # finalized at this point, we don't need to care about AD mutation rule.
                     curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
 
-            if qd.static(not BW):
                 out[i_d, i_b] = curr_out
 
         # Step 2: z = D^{-1} w
@@ -756,6 +764,119 @@ def func_solve_mass(
         func_solve_mass_entity(
             i_e, i_b, vec, out, out_bw, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
         )
+
+
+# ----------------------------------------------------------------------
+# Phase B: per-DOF backward-mode Step 1 of the LDLT solve.
+#
+# The original Step 1 in `func_solve_mass_entity` (BW branch) has the form
+#     for i_d_ in range(n_dofs):
+#         i_d = entity_dof_end - i_d_ - 1
+#         out_bw[0, i_d, i_b] = vec[i_d, i_b]
+#         for j_d in range(i_d + 1, entity_dof_end):
+#             out_bw[0, i_d, i_b] -= L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
+# i.e. each outer iteration reads `out_bw[0, j_d, i_b]` values that earlier
+# outer iterations wrote — a cross-iteration self-referential dependency that
+# Quadrants AD silently drops on the reverse pass. See
+# `tests/test_quadrants_self_ref_ad.py::test_quadrants_cross_iter_same_buffer_ad`
+# and `notes/quadrants_cross_iter_ad_limitation.md`.
+#
+# The workaround is to split the outer loop into one kernel call per
+# `i_d_offset` *from Python*. The cross-iter dependency becomes a
+# cross-kernel dependency that Quadrants AD does handle correctly. The
+# caller (`RigidSolver.substep_pre_coupling_grad`) is responsible for:
+#   - calling these per-DOF kernels in ascending `i_d_offset` order
+#     *before* `kernel_compute_qacc.grad(..., is_backward=True)` so that
+#     `out_bw[0, :, :]` is populated correctly for Step 2's forward read,
+#   - calling their `.grad()` in *descending* `i_d_offset` order *after*
+#     `kernel_compute_qacc.grad(..., is_backward=True)` so that the seed
+#     `out_bw[0, :, :].grad` produced by Step 2's reverse is propagated
+#     into `vec[i_d, i_b].grad` (= `dofs_state.force.grad`).
+# `func_solve_mass_entity` skips its Step 1 entirely in BW mode.
+@qd.func
+def func_solve_mass_entity_step1_one_dof_bw(
+    i_e: qd.int32,
+    i_b: qd.int32,
+    i_d_offset: qd.int32,
+    vec: qd.Tensor,
+    out_bw: qd.template(),
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    if rigid_global_info.mass_mat_mask[i_e, i_b]:
+        entity_dof_end = entities_info.dof_end[i_e]
+        n_dofs = entities_info.n_dofs[i_e]
+
+        if i_d_offset < n_dofs:
+            i_d = entity_dof_end - i_d_offset - 1
+            curr = vec[i_d, i_b]
+            for j_d in range(i_d + 1, entity_dof_end):
+                curr = curr - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
+            out_bw[0, i_d, i_b] = curr
+
+
+@qd.kernel
+def kernel_solve_mass_step1_one_dof_bw(
+    i_d_offset: qd.int32,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Top-level ndrange is required by Quadrants AD (mixing for-loops and
+    # straight-line statements at the kernel top level is rejected).
+    # NB: use `dofs_state.force.shape[1]` (always (n_dofs_, B)) for the batch
+    # dimension — `acc_smooth_bw` has shape `(2, n_dofs_, B)` only in grad mode
+    # and collapses to `()` otherwise (see `maybe_shape`).
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.force.shape[1]):
+        func_solve_mass_entity_step1_one_dof_bw(
+            i_e=i_e,
+            i_b=i_b,
+            i_d_offset=i_d_offset,
+            vec=dofs_state.force,
+            out_bw=dofs_state.acc_smooth_bw,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+# ----------------------------------------------------------------------
+# Manual Step 2 reverse for the LDLT solve.
+#
+# `kernel_compute_qacc.grad` (Quadrants-auto-generated) propagates
+# `acc.grad → acc_smooth.grad → acc_smooth_bw[1].grad` through Step 3's
+# reverse, but silently drops the trivial Step 2 reverse contribution
+# `grad[acc_smooth_bw[0, i_d]] += D_inv[i_d] * grad[acc_smooth_bw[1, i_d]]`.
+# Confirmed via instrumentation that `acc_smooth_bw.grad[0] = 0` after
+# `kernel_compute_qacc.grad` even though `acc_smooth_bw.grad[1]` is non-zero.
+# The failure is independent of whether Step 1 BW is present or skipped, and
+# the isolated reverse-mode of the same `out[1] = out[0] * c` pattern
+# *does* work (see `tests/test_quadrants_self_ref_ad.py::
+# test_quadrants_two_slot_self_ref_ad`), so the root cause is specific to
+# `kernel_compute_qacc.grad`'s tape construction — possibly an interaction
+# with the nested `@qd.func` boundaries (`func_compute_qacc` →
+# `func_solve_mass` → `func_solve_mass_entity`), the dynamic
+# `mass_mat_mask` guard, or the two top-level ndranges in
+# `func_compute_qacc`. Workaround: run Step 2 reverse manually as a
+# separate kernel after `kernel_compute_qacc.grad`.
+@qd.kernel
+def kernel_solve_mass_step2_reverse_bw(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.force.shape[1]):
+        if rigid_global_info.mass_mat_mask[i_e, i_b]:
+            entity_dof_start = entities_info.dof_start[i_e]
+            entity_dof_end = entities_info.dof_end[i_e]
+            for i_d in range(entity_dof_start, entity_dof_end):
+                dofs_state.acc_smooth_bw.grad[0, i_d, i_b] = (
+                    dofs_state.acc_smooth_bw.grad[0, i_d, i_b]
+                    + rigid_global_info.mass_mat_D_inv[i_d, i_b] * dofs_state.acc_smooth_bw.grad[1, i_d, i_b]
+                )
 
 
 @qd.func
