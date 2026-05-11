@@ -40,9 +40,29 @@ from .utils import assert_allclose
 
 
 pytestmark = [
-    pytest.mark.precision("64"),
     pytest.mark.debug(False),
 ]
+
+
+# Parametrization params (mirrors `test_diff_forward_kinematics.py`).
+_PRECISION_PARAMS = [
+    pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+    pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+]
+
+_N_ENVS_PARAMS = [
+    pytest.param(0, id="single"),
+    pytest.param(4, id="batched"),
+]
+
+# Bit-exact in fp64; fp32 round-off is ~ulp(typical_value), which for the
+# qpos/grad magnitudes in this test is ~1e-6. The tolerance band is set
+# loose enough to absorb fp32 round-off but tight enough that any real
+# stale-cache leak would fail (the pre-fix drift was ~5e-7 even in fp64).
+_TOL = {
+    "64": dict(atol=1e-12, rtol=1e-10),
+    "32": dict(atol=1e-5, rtol=1e-4),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +190,14 @@ def _build_scene(mjcf_str: str, n_envs: int = 0):
     return scene, robot
 
 
+def _make_velocity(n_envs: int, n_dofs: int, seed: int) -> np.ndarray:
+    """Per-env-distinct velocity vector. Single env: shape (n_dofs,). Batched: (n_envs, n_dofs)."""
+    rng = np.random.default_rng(seed)
+    if n_envs == 0:
+        return rng.standard_normal(n_dofs)
+    return rng.standard_normal((n_envs, n_dofs))
+
+
 def _rigid_qpos_loss(scene):
     """Differentiable scalar loss = sum((qpos)**2). Reads `state.qpos` via
     `scene.get_state()` so the resulting tensor is a gs.Tensor whose
@@ -199,21 +227,25 @@ def _read_qpos(scene) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("precision_str", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 @pytest.mark.parametrize("mjcf_str, n_dofs", _TOPOLOGIES)
-def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
+def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs, n_envs, precision_str):
     """SHAC-style two-segment trajectory in Scene A matches the same two
     segments run in independent Scene B (horizon 1) and Scene C (horizon 2,
     started from B's mid-trajectory snapshot via `scene.reset(state)`).
 
     Verifies that `scene.get_state()` + `scene.reset(state)` correctly
     isolates two consecutive horizons: physics state propagates seamlessly,
-    but the autograd tapes are independent."""
-    rng_v1 = np.random.default_rng(101).standard_normal(n_dofs).astype(np.float64)
-    rng_v2 = np.random.default_rng(202).standard_normal(n_dofs).astype(np.float64)
+    but the autograd tapes are independent. Parametrized over the J1~J5
+    topologies × {single env, 4 envs} × {fp64, fp32}."""
+    tol = _TOL[precision_str]
+    rng_v1 = _make_velocity(n_envs, n_dofs, seed=101)
+    rng_v2 = _make_velocity(n_envs, n_dofs, seed=202)
     H = 5
 
     # ----- Scene A: one scene, snapshot+reset between two horizons -----
-    sceneA, robotA = _build_scene(mjcf_str)
+    sceneA, robotA = _build_scene(mjcf_str, n_envs=n_envs)
     sceneA.reset()
     v1A = gs.tensor(rng_v1, dtype=gs.tc_float, requires_grad=True)
     loss_h1_A = _run_segment(sceneA, robotA, v1A, H)
@@ -230,7 +262,7 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
     grad2_A = v2A.grad.detach().clone().cpu().numpy()
 
     # ----- Scene B: same horizon 1 only -----
-    sceneB, robotB = _build_scene(mjcf_str)
+    sceneB, robotB = _build_scene(mjcf_str, n_envs=n_envs)
     sceneB.reset()
     v1B = gs.tensor(rng_v1, dtype=gs.tc_float, requires_grad=True)
     loss_h1_B = _run_segment(sceneB, robotB, v1B, H)
@@ -245,11 +277,12 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
     assert_allclose(qpos_mid_A, qpos_mid_B, atol=0, rtol=0)
     # Sanity: A and B's horizon-1 losses match exactly.
     assert_allclose(loss_h1_A.detach().cpu().item(), loss_h1_B.detach().cpu().item(), atol=0, rtol=0)
-    # Core assertion: horizon-1 gradient identical.
-    assert_allclose(grad1_A, grad1_B, atol=1e-12, rtol=1e-10)
+    # Core assertion: horizon-1 gradient identical (bit-exact for fp64, fp32
+    # ulps band for fp32).
+    assert_allclose(grad1_A, grad1_B, **tol)
 
     # ----- Scene C: fresh scene, start from B's mid-trajectory snapshot -----
-    sceneC, robotC = _build_scene(mjcf_str)
+    sceneC, robotC = _build_scene(mjcf_str, n_envs=n_envs)
     sceneC.reset(snapshot_B)
     v2C = gs.tensor(rng_v2, dtype=gs.tc_float, requires_grad=True)
     loss_h2_C = _run_segment(sceneC, robotC, v2C, H)
@@ -266,11 +299,11 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
     # for the only one of these that actually matters for downstream
     # gradient — `acc_smooth_bw`, the LDLT BW cache — is in
     # `RigidSolver.reset_grad` (zeroed via `kernel_zero_acc_smooth_bw`).
-    # With that, A == C bit-exact up to fp64 round-off.
-    assert_allclose(qpos_end_A, qpos_end_C, atol=1e-12, rtol=1e-10)
-    assert_allclose(loss_h2_A.detach().cpu().item(), loss_h2_C.detach().cpu().item(), atol=1e-12, rtol=1e-10)
+    # With that, A == C bit-exact up to fp round-off.
+    assert_allclose(qpos_end_A, qpos_end_C, **tol)
+    assert_allclose(loss_h2_A.detach().cpu().item(), loss_h2_C.detach().cpu().item(), **tol)
     # Core assertion: horizon-2 gradient identical.
-    assert_allclose(grad2_A, grad2_C, atol=1e-12, rtol=1e-10)
+    assert_allclose(grad2_A, grad2_C, **tol)
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +311,7 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.precision("64")
 def test_reset_grad_preserves_state():
     """`scene.reset_grad()` must not touch qpos / vel / time counters."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
@@ -300,6 +334,7 @@ def test_reset_grad_preserves_state():
     )
 
 
+@pytest.mark.precision("64")
 def test_reset_grad_zeros_internal_grad_fields():
     """`scene.reset_grad()` zeros the solver's `.grad` fields and adjoint caches."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
@@ -340,6 +375,7 @@ def test_reset_grad_zeros_internal_grad_fields():
         assert max_abs == 0.0, f"{name}.grad not zero after reset_grad: max_abs={max_abs:.3e}"
 
 
+@pytest.mark.precision("64")
 def test_reset_grad_clears_queried_states():
     """`scene.reset_grad()` clears the simulator's `_queried_states` cache."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
@@ -361,6 +397,7 @@ def test_reset_grad_clears_queried_states():
     )
 
 
+@pytest.mark.precision("64")
 def test_reset_grad_idempotent():
     """Calling `scene.reset_grad()` twice is safe (second call is a no-op)."""
     scene, robot = _build_scene(MJCF_REVOLUTE)
