@@ -124,3 +124,75 @@ The fix is correct in principle but ~2-3 hours of work (writing closed-
 form LDLT reverse, per-DOF kernel split, unit test for the reverse in
 isolation, integration into `substep_pre_coupling_grad`). Logged here
 so the next session can pick it up without re-deriving.
+
+## Implicit-function-theorem attempt (2026-05-11)
+
+Tried to bypass the LDLT reverse entirely using the implicit function
+theorem: if `x = M^-1 y`, then `M.grad = -M^-T (x.grad) x^T`. Since the
+Phase B chain already populates `force.grad = M^-T * acc_smooth.grad`,
+this is just an outer product
+
+```
+mass_mat[i, j].grad -= force.grad[i] * acc_smooth[j]
+```
+
+Tested with three write strategies, none worked:
+
+1. **Kernel-side read-and-add**:
+   ```python
+   rigid_global_info.mass_mat.grad[i, j, b] = (
+       rigid_global_info.mass_mat.grad[i, j, b] - force.grad[i, b] * acc_smooth[j, b]
+   )
+   ```
+   Same pattern as `kernel_solve_mass_step2_reverse_bw` which DOES work
+   for `acc_smooth_bw.grad`. Result: `mass_mat.grad` stays at 0.
+
+2. **Kernel-side `qd.atomic_add`**:
+   ```python
+   qd.atomic_add(rigid_global_info.mass_mat.grad[i, j, b], -force.grad * acc_smooth)
+   ```
+   Result: still 0.
+
+3. **Python-side in-place via torch view**:
+   ```python
+   mm_grad_t = qd_to_torch(self._rigid_global_info.mass_mat.grad, copy=False)
+   force_grad_t = qd_to_torch(self.dofs_state.force.grad, copy=False)
+   acc_smooth_t = qd_to_torch(self.dofs_state.acc_smooth, copy=True)
+   mm_grad_t.sub_(force_grad_t.unsqueeze(1) * acc_smooth_t.unsqueeze(0))
+   ```
+   Same `qd_to_torch(grad, copy=False).zero_()` trick that fixed
+   `acc_smooth_bw.grad` for the acc_smooth_bw cross-substep leak.
+   Result: still 0 at end of backward.
+
+**Diagnosis**: `mass_mat` is a forward field (set by
+`func_compute_mass_matrix` in step_1). `acc_smooth_bw` is a BW buffer
+(`shape_bw = maybe_shape((2, ...), requires_grad)`). The two have
+*different* storage classes and Quadrants treats their `.grad` slots
+differently — BW-buffer `.grad` accepts external writes (both kernel-
+side and Python-side), but forward-field `.grad` is consumed/reset by
+the auto-AD chain rule and external seeds are silently dropped before
+`func_compute_mass_matrix.grad` can read them.
+
+This is the same Quadrants AD fundamental limitation as the original
+factor-gate observation: Quadrants cannot reverse-mode the LDLT, and
+also cannot accept external `mass_mat.grad` seeds that would let us
+bypass the LDLT reverse.
+
+## Conclusion
+
+The mass-matrix chain silent drop is **a fundamental Quadrants AD
+framework limitation** for the forward-field `.grad` storage class
+combined with cross-iter LDLT factorization. A proper fix would need
+either:
+
+  * A Quadrants-side feature to make forward-field `.grad` writable
+    (akin to BW buffers), or
+  * A new explicit BW-buffer counterpart `mass_mat_bw` whose `.grad`
+    we can seed, with a manual kernel that copies our seed from
+    `mass_mat_bw.grad` to the appropriate downstream `.grad` (cinr_*,
+    cdof_*, etc.) via a hand-written chain rule (bypassing the
+    forward-field `mass_mat.grad` entirely).
+
+Both are large structural changes. For now, the J4/J5 multistep
+xfails are documented as known limitations and the fix is parked for
+a future session with broader scope.
