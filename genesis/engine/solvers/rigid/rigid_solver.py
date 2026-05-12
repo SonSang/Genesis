@@ -1324,6 +1324,10 @@ class RigidSolver(KinematicSolver):
             ("links_state.i_quat", self.links_state.i_quat),
             ("joints_state.xanchor", self.joints_state.xanchor),
             ("joints_state.xaxis", self.joints_state.xaxis),
+            ("rigid_global_info.mass_mat", self._rigid_global_info.mass_mat),
+            ("rigid_global_info.mass_mat_L", self._rigid_global_info.mass_mat_L),
+            ("rigid_global_info.mass_mat_D_inv", self._rigid_global_info.mass_mat_D_inv),
+            ("rigid_global_info.mass_mat_L_bw", self._rigid_global_info.mass_mat_L_bw),
         ]
         verbose_set = {
             "rigid_global_info.qpos",

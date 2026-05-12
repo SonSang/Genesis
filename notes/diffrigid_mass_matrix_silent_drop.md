@@ -178,21 +178,55 @@ factor-gate observation: Quadrants cannot reverse-mode the LDLT, and
 also cannot accept external `mass_mat.grad` seeds that would let us
 bypass the LDLT reverse.
 
+## Field-level diagnosis of where chain breaks (2026-05-11)
+
+Tested each forward field by Python-side injecting `.grad = 1.0` mid-
+backward (right before `kernel_forward_dynamics_without_qacc.grad`) and
+checking if it propagates to `u.grad` for a J5 N=1 step:
+
+| Field                       | Chain works? | u.grad max abs    |
+|-----------------------------|--------------|-------------------|
+| `dofs_state.cdof_vel`       | YES          | 1.05e-4           |
+| `links_state.cinr_inertial` | YES          | 1.78e-5           |
+| `dofs_state.cdof_ang`       | NO           | 1.87e-8 (=normal) |
+| `links_state.cinr_pos`      | NO           | 1.87e-8           |
+| `links_state.cinr_mass`     | NO           | 1.87e-8           |
+| `links_state.crb_inertial`  | NO           | 1.87e-8           |
+| `dofs_state.f_ang`          | NO           | 1.87e-8           |
+| `dofs_state.f_vel`          | NO           | 1.87e-8           |
+| `rigid_global_info.mass_mat`| NO           | (earlier attempt) |
+| `mass_mat_L_bw`             | NO           | (earlier attempt) |
+
+So Quadrants AD only chains `cdof_vel.grad` and `cinr_inertial.grad`
+downstream to qpos.grad. Every other forward field in the mass-matrix
+construction path is silently dropped during reverse.
+
+The Cholesky-Banachiewicz cross-iter limitation is *part* of the
+picture, but it's not the only issue: even `crb_inertial.grad`,
+`cinr_pos.grad`, `cinr_mass.grad`, and `cdof_ang.grad` silently drop,
+all of which are part of the mass-matrix construction chain through
+`func_compute_mass_matrix` (no cross-iter Cholesky involved).
+
 ## Conclusion
 
 The mass-matrix chain silent drop is **a fundamental Quadrants AD
-framework limitation** for the forward-field `.grad` storage class
-combined with cross-iter LDLT factorization. A proper fix would need
-either:
+framework limitation** affecting most forward-field `.grad` slots in
+the rigid solver's mass-matrix path. A proper fix needs either:
 
-  * A Quadrants-side feature to make forward-field `.grad` writable
-    (akin to BW buffers), or
-  * A new explicit BW-buffer counterpart `mass_mat_bw` whose `.grad`
-    we can seed, with a manual kernel that copies our seed from
-    `mass_mat_bw.grad` to the appropriate downstream `.grad` (cinr_*,
-    cdof_*, etc.) via a hand-written chain rule (bypassing the
-    forward-field `mass_mat.grad` entirely).
+  * **Manual reverse chain to `cinr_inertial.grad` + `cdof_vel.grad`
+    only** (the two surviving channels). Closed-form `mass_mat.grad →
+    cinr_inertial.grad / cdof_vel.grad` chain rule, bypassing all the
+    silently-dropped intermediates. Lossy fix — contributions through
+    `cinr_pos`, `cinr_mass`, `cdof_ang`, `crb_*` are mathematically
+    missing, but the dominant contribution (mass-matrix L-diagonal
+    via cinr_inertial) is captured.
+  * **Quadrants-side framework feature** to make forward-field `.grad`
+    writable across the board, or
+  * **New explicit BW-buffer counterpart** for every forward field in
+    the path (mass-matrix construction chain has ~8 such fields).
 
-Both are large structural changes. For now, the J4/J5 multistep
-xfails are documented as known limitations and the fix is parked for
-a future session with broader scope.
+All three are large changes. The first (manual partial reverse) is
+most tractable and would recover the dominant J5/J4 mass-matrix chain
+gradient. ~3-4 hours of careful manual chain-rule derivation.
+
+For now, J4/J5 multistep xfails remain as documented known issues.
