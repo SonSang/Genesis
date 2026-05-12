@@ -429,3 +429,57 @@ contributors. Instead:
 
 The 2300× Stage A/B/C magnitude inflate is a real bug worth fixing
 on its own, but does not block J5 multistep correctness.
+
+## Dominant chain identified: `cd_ang` (link spatial velocity)
+
+Systematic per-field inject test on J5 N=1 (set `.grad = 1.0`,
+measure resulting u.grad max):
+
+| Field                       | u.grad max per unit | Notes                      |
+|-----------------------------|---------------------|----------------------------|
+| `links_state.cd_ang`        | **1.05e-1**         | **DOMINANT**               |
+| `dofs_state.cdofvel_ang`    | 8.15e-2             | strong                     |
+| `links_state.cd_vel`        | 4.36e-2             | strong                     |
+| `dofs_state.cdofd_vel`      | 2.70e-2             | medium                     |
+| `dofs_state.cdofvel_vel`    | 1.42e-2             | medium                     |
+| `links_state.cinr_quat`     | 5.25e-4             | weak                       |
+| `dofs_state.cdof_vel`       | 1.05e-4             | weak                       |
+| `links_state.cinr_inertial` | 1.78e-5             | very weak (mass-mat chain) |
+| `dofs_state.cdof_ang`       | 0  (silent drop)    |                            |
+| `links_state.cinr_pos`      | 0                   |                            |
+| `links_state.cinr_mass`     | 0                   |                            |
+| `dofs_state.cdofd_ang`      | 0                   |                            |
+| `links_state.cdd_*`         | 0                   |                            |
+| `links_state.cfrc_*`        | 0                   |                            |
+
+**`cd_ang` chain factor is ~6000× larger than `cinr_inertial`** — the
+J5 mismatch's dominant contributor is the link spatial velocity chain,
+not the mass-matrix chain.
+
+To recover the 7e-6 J5 mismatch, we need to inject roughly
+`cd_ang.grad ≈ 7e-5`. That's 6e-4× of a unit inject — very achievable
+via a Phase B-style standalone split of `func_forward_velocity` or
+some chain feeding into `cd_ang`.
+
+## Next-next-next session plan: split `func_forward_velocity` Phase B-style
+
+Forward (in `func_forward_velocity`):
+  ```
+  cd_ang[parent] = cd_ang[ancestor]                # from subtree
+  cd_ang[link] = cd_ang[parent] + Σ_d cdofvel_ang[d]  (for d in link's dofs)
+  ```
+
+Backward target: get `cd_ang.grad` to flow downstream correctly. Each
+intermediate (`cdofvel_ang`, `cdofd_*`, `cd_*` etc.) needs to be a
+standalone-kernel push so its `.grad` chain reaches the dominant
+`cd_ang` field.
+
+The Phase B pattern is the same as for `factor_mass`:
+  * Identify the silent-drop forward statement.
+  * Lift it out into its own `@qd.kernel` (decompose if there's cross-iter).
+  * Call forward as part of `substep_pre_coupling_grad` (or absorb into
+    `self.substep(f)` if needed).
+  * Call `.grad` in reverse order to chain the gradient through.
+
+Estimated effort: similar to `factor_mass` (~3-4 hours given the
+pattern is now known).
