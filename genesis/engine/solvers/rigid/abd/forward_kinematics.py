@@ -1896,6 +1896,49 @@ def func_update_cartesian_space(
 
 
 @qd.kernel(fastcache=True)
+def kernel_COM_links(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Standalone wrapper for `func_COM_links` so its reverse can be invoked
+    independently of `kernel_update_cartesian_space.grad`.
+
+    Forward replay sets `i_pos_bw`, `i_quat`, `root_COM*`, `cinr_*`,
+    `cdof_*`, `cdofvel_*`, `j_*` from `links_state.{pos,quat}`. Backward
+    chains `cinr_*.grad / cdof_*.grad → i_pos.grad / i_quat.grad → ...
+    → links_state.{pos,quat}.grad`. Required between
+    `kernel_forward_velocity_one_link.grad` and
+    `kernel_update_cartesian_space_one_link.grad` in
+    `substep_pre_coupling_grad`: the one_link split of update_cartesian_space
+    only handles `func_forward_kinematics_entity_one_link` (link
+    transforms), so without this `cinr/cdof.grad` accumulated by
+    `kernel_forward_dynamics_without_qacc.grad` never reaches qpos.grad.
+    """
+    for i_b in range(links_state.pos.shape[1]):
+        func_COM_links(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
+
+
+@qd.kernel(fastcache=True)
 def kernel_update_cartesian_space(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,

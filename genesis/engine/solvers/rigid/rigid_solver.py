@@ -91,6 +91,7 @@ from .abd.forward_kinematics import (
     kernel_update_all_verts,
     kernel_update_geom_aabbs,
     kernel_update_vgeoms,
+    kernel_COM_links,
     kernel_update_cartesian_space,
     kernel_update_cartesian_space_one_link,
 )
@@ -1454,6 +1455,43 @@ class RigidSolver(KinematicSolver):
                     is_backward=True,
                 )
             self._debug_grad_dump(f"f={f} after post-fwd_velocity.grad")
+
+            # COM-links forward + .grad pair. Sits between forward_velocity.grad
+            # and update_cartesian_space.grad to mirror the forward order
+            # `forward_kinematics → COM_links → forward_velocity`. Drains the
+            # `cinr_*.grad` / `cdof_*.grad` populated by the Coriolis chain in
+            # `kernel_forward_dynamics_without_qacc.grad` (which runs later in
+            # this substep_pre_coupling_grad but writes the same fields the
+            # *next* substep's BW will read). The one_link split of
+            # update_cartesian_space below skips `func_COM_links_entity`
+            # entirely, so without this call cinr/cdof.grad never chain to
+            # qpos.grad and accumulate as multi-step over-counting on J4/J5.
+            kernel_COM_links(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_COM_links.grad(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            self._debug_grad_dump(f"f={f} after post-COM_links.grad")
+
             # DIAGNOSTIC: split per-link kernel calls to test if cross-link adjoint attenuation
             # in `kernel_update_cartesian_space.grad` is caused by the single-kernel outer
             # link loop. For J4 entity has 2 links — forward in order, backward in reverse.
@@ -1653,6 +1691,35 @@ class RigidSolver(KinematicSolver):
                     static_rigid_sim_config=self._static_rigid_sim_config,
                     is_backward=True,
                 )
+            # COM-links forward + .grad — same role as in post-FK section above.
+            # Drains the cinr/cdof.grad populated by `fwd_dynamics_without_qacc.grad`
+            # back into links_state.{pos,quat}.grad so the subsequent
+            # update_cartesian_space_one_link.grad can chain it into qpos.grad.
+            kernel_COM_links(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_COM_links.grad(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            self._debug_grad_dump(f"f={f} after initial-COM_links.grad")
             for _offset in range(_MAX_LINKS):
                 kernel_update_cartesian_space_one_link(
                     _offset,
