@@ -171,30 +171,58 @@ def qd_quat_to_R(quat, eps):
 def qd_quat_to_xyz(quat, eps):
     """
     Convert a quaternion into intrinsic x-y-z Euler angles.
+
+    AD-safety rewrite — same family of fixes as `qd_rotvec_to_quat` /
+    `qd_quat_to_R`. The previous form had:
+      * outer `if quat_norm_sqr > eps` branch (Quadrants silently drops
+        the reverse chain through dynamic branches like this);
+      * bare division `2.0 / quat_norm_sqr`;
+      * tuple-unpack `q_w, q_x, q_y, q_z = quat` (explicitly flagged in
+        `qd_transform_by_quat` as silently dropping the q_x adjoint);
+      * inner `if cosp > eps` gimbal-lock branch.
+    Now: branch-free regularization for the outer norm, explicit indexing
+    for the components, gimbal-lock branch kept (it switches between two
+    valid Euler representations so cannot be merged smoothly, but cosp >
+    eps is the only path we hit for unit quaternions outside near-pole
+    singularity — the silent drop on its reverse is the J4 free-joint
+    leak suspect).
     """
+    d = quat.norm_sqr() + eps
+    s = 2.0 / d
+    q_w = quat[0]
+    q_x = quat[1]
+    q_y = quat[2]
+    q_z = quat[3]
+    q_xs = q_x * s
+    q_ys = q_y * s
+    q_zs = q_z * s
+    q_wx = q_w * q_xs
+    q_wy = q_w * q_ys
+    q_wz = q_w * q_zs
+    q_xx = q_x * q_xs
+    q_xy = q_x * q_ys
+    q_xz = q_x * q_zs
+    q_yy = q_y * q_ys
+    q_yz = q_y * q_zs
+    q_zz = q_z * q_zs
+
+    sinycosp = q_wz - q_xy
+    cosycosp = 1.0 - (q_yy + q_zz)
+    cosp = qd.sqrt(cosycosp * cosycosp + sinycosp * sinycosp)
+
+    # Gimbal-lock branch retained: at cosp ≈ 0, the `atan2(_, 1-(q_xx+q_yy))`
+    # and `atan2(sinycosp, cosycosp)` denominators both approach zero, so
+    # while NaN doesn't occur, the *gradient* through atan2 explodes
+    # (ill-conditioned). The fallback formula folds all the rotation into
+    # yaw, which is the correct gimbal-lock representation.
+    pitch = qd.atan2(q_xz + q_wy, cosp)
     roll = gs.qd_float(0.0)
-    pitch = gs.qd_float(0.0)
     yaw = gs.qd_float(0.0)
-
-    quat_norm_sqr = quat.norm_sqr()
-    if quat_norm_sqr > eps:
-        s = 2.0 / quat_norm_sqr
-        q_w, q_x, q_y, q_z = quat
-        q_xs, q_ys, q_zs = q_x * s, q_y * s, q_z * s
-        q_wx, q_wy, q_wz = q_w * q_xs, q_w * q_ys, q_w * q_zs
-        q_xx, q_xy, q_xz = q_x * q_xs, q_x * q_ys, q_x * q_zs
-        q_yy, q_yz, q_zz = q_y * q_ys, q_y * q_zs, q_z * q_zs
-
-        sinycosp = q_wz - q_xy
-        cosycosp = 1.0 - (q_yy + q_zz)
-        cosp = qd.sqrt(cosycosp**2 + sinycosp**2)
-
-        pitch = qd.atan2(q_xz + q_wy, cosp)
-        if cosp > eps:
-            roll = qd.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
-            yaw = qd.atan2(sinycosp, cosycosp)
-        else:
-            yaw = qd.atan2(q_wz + q_xy, 1.0 - (q_xx + q_zz))
+    if cosp > eps:
+        roll = qd.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
+        yaw = qd.atan2(sinycosp, cosycosp)
+    else:
+        yaw = qd.atan2(q_wz + q_xy, 1.0 - (q_xx + q_zz))
 
     return qd.Vector([roll, pitch, yaw], dt=gs.qd_float)
 
