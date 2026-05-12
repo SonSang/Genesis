@@ -367,3 +367,65 @@ washed out at 1e-9.
 
 Both items 2 and 3 were mathematically correct chain rules but ineffective
 because `mass_mat.grad` itself is corrupted upstream.
+
+## Even with correct IFT-computed mass_mat.grad, contribution is too small
+
+Tried bypassing the Stage A/B/C reverse entirely: computed
+`mm_grad = -force.grad ⊗ acc_smooth` directly in Python (the exact
+IFT closed form, magnitude 5.6e-8 — matching the prediction). Then
+ran the full manual chain rule (inertial_mul reverse + crb-subtree
+reverse) into `cinr_inertial.grad` + `cdof_vel.grad`. J5 mismatch:
+**unchanged at 7e-6**.
+
+Magnitude estimate:
+  * `mm_grad` ~ 5.6e-8 (IFT-correct)
+  * `f_ang.grad_local` = mm_grad · cdof_ang ~ 2.8e-8
+  * `outer(f_ang.grad, cdof_ang)` for crb_inertial ~ 1.4e-8
+  * `cinr_inertial.grad` (subtree-propagated, 3-link) ~ 4.2e-8
+  * `cinr_inertial.grad → u.grad` chain factor (from inject test):
+    1.78e-5 per unit
+  * Expected u.grad contribution: 4.2e-8 × 1.78e-5 = **7.5e-13**
+
+7.5e-13 << 7e-6 mismatch. The mass-matrix chain is **not the dominant
+source of J5 multi-step error**, even with a perfectly correct chain
+rule.
+
+## Updated hypothesis: dominant source is elsewhere in fwd_dynamics
+
+Diagnostic data point: after `kernel_forward_dynamics_without_qacc.grad`,
+`cinr_inertial.grad = 2.13e-5` on J5 N=2 (without our manual injection).
+This comes from Quadrants AD's automatic reverse of the rest of
+`func_forward_dynamics` (not just mass_mat — also bias_force, update_acc,
+update_force). Using the cinr_inertial→u.grad chain factor 1.78e-5,
+expected u.grad contribution = 2.13e-5 × 1.78e-5 = **3.8e-10**. But
+baseline u.grad max = 1.87e-8 (factor ~50× larger than what cinr_inertial
+contributes alone). So the dominant chain is not even `cinr_inertial`,
+let alone `mass_mat`.
+
+The real culprit is one of:
+  * **Coriolis bias chain** (`func_bias_force` → cfrc → ... → cinr/cdof)
+  * **cdofd / cd chains** (forward_velocity → cdofd_*, cd_*)
+  * **FK chain** (link transforms → cinr/cdof via update_cartesian_space)
+
+Inject testing identified two unique "working" chains
+(cinr_inertial.grad, cdof_vel.grad), but the magnitudes they need to
+carry to recover the missing 7e-6 contribution are **at least 100×
+larger** than what mass_mat chain provides. Some other silent drop
+in the Coriolis/FK family is masking the dominant chain.
+
+## Next session: identify the dominant J5 silent-drop chain
+
+Don't pursue mass_mat further until verified to be in the top-3
+contributors. Instead:
+
+  1. Stress-probe by injecting non-zero `.grad` into each forward
+     field along the Coriolis/FK chain (cdof_*, cinr_*, cd_*, cdofd_*,
+     cfrc_*, link.pos/quat/cd*/cinr*) one at a time and measuring the
+     resulting u.grad shift. Map out the magnitude landscape.
+  2. The dominant chain (largest u.grad-per-unit-grad) is the one to
+     fix. Apply the same Phase B-style standalone-kernel split there.
+  3. Mass-matrix Phase B chain (commit `9fcae1f6`) stays in place as
+     defense in depth, but is not the bottleneck.
+
+The 2300× Stage A/B/C magnitude inflate is a real bug worth fixing
+on its own, but does not block J5 multistep correctness.
