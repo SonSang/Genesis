@@ -229,4 +229,141 @@ All three are large changes. The first (manual partial reverse) is
 most tractable and would recover the dominant J5/J4 mass-matrix chain
 gradient. ~3-4 hours of careful manual chain-rule derivation.
 
+## Phase B-style split of factor_mass succeeded (2026-05-11/12)
+
+Implemented in `9fcae1f6`. Three standalone kernels in
+`abd/forward_dynamics.py`:
+
+  * `kernel_factor_mass_stage_a_bw` — `mass_mat → mass_mat_L_bw[0]`
+  * `kernel_factor_mass_stage_b_pair_bw(p_i0, p_j0)` — one Cholesky-
+    Banachiewicz pair, per-pair kernel split (ascending forward,
+    descending reverse)
+  * `kernel_factor_mass_stage_c_bw` — `mass_mat_L_bw[1] → mass_mat_L`,
+    `mass_mat_D_inv`
+
+Effect: `mass_mat.grad` is now correctly seeded mid-backward
+(5.85e-8 on J5 N=2 after `factor_mass_stage_a.grad`). Verified by
+instrumentation. This was the wall blocking the chain — Phase B
+pattern works.
+
+## Next stage attempted: chain mass_mat.grad → cinr/cdof.grad
+
+Tried adding `kernel_compute_mass_matrix_assemble_bw` (the
+`mass_mat[i,j] = (f_ang · cdof_ang + f_vel · cdof_vel) * mask` step)
+as a standalone Phase B kernel. The kernel's `.grad` does fire
+correctly: after the call, `cdof_vel.grad = 1.6e-6`, `f_ang.grad =
+5.9e-7`, then `fwd_dynamics_without_qacc.grad` consumes those and
+chains to `cinr_inertial.grad = 2.1e-5`.
+
+**But J5 mismatch explodes from 7e-6 to 0.08** — magnitude inflate
+of ~10⁴×. Per-component u.grad jumps from O(1e-8) baseline to
+O(1e-6) (still less than the inflated mismatch — the mismatch
+itself becomes O(1e-2), 10⁴ over both baseline and FD).
+
+Hypothesis for inflate (unconfirmed): `kernel_forward_dynamics_without_qacc`
+is invoked only via `.grad` in `substep_pre_coupling_grad` (never as
+a standalone `.forward`), but Quadrants' `.grad` invocation runs a
+fresh forward+reverse pair internally — so the kernel's *own*
+mass-matrix forward writes get pushed *again* during the `.grad`
+call, after our standalone assemble already pushed once.  Multiple
+identical mass-matrix forward pushes interleaving with our
+standalone reverse may be the source of the 10⁴× chain inflate.
+Confirming this needs careful instrumentation of `mass_mat.grad`
+state across each individual kernel boundary.
+
+## Next-session fix path (clear plan)
+
+Bypass the `assemble` standalone forward+reverse entirely. Instead:
+
+  1. Keep the working `factor_mass` Phase B split → `mass_mat.grad`
+     is seeded.
+  2. Python-side, read `mass_mat.grad` via `qd_to_torch(...,
+     copy=True)`.
+  3. Manually apply the closed-form chain rule
+
+         delta[i,j,b] = mass_mat[i,j,b].grad * mass_parent_mask[i,j]
+         cdof_vel[j,b].grad   += Σ_i delta[i,j,b] * f_vel[i,b]
+         cinr_inertial[l,b].grad += Σ_{i: link(i)=l, j} delta[i,j,b] *
+                                    cdof_ang[i,b] ⊗ cdof_ang[j,b]
+                                  ... (full inertial_mul + crb-
+                                    subtree-sum reverse)
+
+     and `qd_to_torch(..., copy=False).add_()` into the two surviving
+     channels.
+  4. No standalone forward kernel for the assembly path — bypasses
+     the multi-push inflate that wrecked the previous attempt.
+
+Magnitude estimate from the worked dump:
+  * `mass_mat.grad` ~ 1.29e-4 (after Stage A.grad)
+  * `f_vel` ~ 0.03 → cdof_vel.grad contrib ~ 4e-6 → u.grad delta
+    via cdof_vel.grad-to-qpos chain (~1.05e-4 per unit) ~ 4e-10
+  * cinr chain contribution dominates — needs the full
+    inertial_mul + crb-subtree reverse
+
+That last piece is the ~2-3 hours of remaining work. After it,
+J4/J5 multi-step should converge if our chain magnitude estimate is
+correct.
+
 For now, J4/J5 multistep xfails remain as documented known issues.
+
+## Next-next-session: mass_mat.grad magnitude is 2300× too large (2026-05-12)
+
+While probing the chain further, found that the `mass_mat.grad` value
+seeded by the factor_mass Phase B chain (Stage A.grad output) is
+**not** the implicit-function-theorem result. By IFT, for `x = M^-1 y`:
+
+    mass_mat.grad[i,j] = -force.grad[i] * acc_smooth[j]
+
+On J5 N=2 baseline this should give `|mass_mat.grad| ~ |force.grad| *
+|acc_smooth| ~ 1.87e-8 * 3 = 5.6e-8`. Actual measured value (from
+`after factor_mass_stage_a.grad` dump): **1.29e-4** — about 2300×
+larger than IFT predicts.
+
+Stage A reverse is correct in isolation (unit-tested: inject
+mass_mat_L_bw[0].grad = 1.0, get
+mass_mat.grad = [[1,0,0],[2,1,0],[2,2,1]] which is the symmetric-copy
+reverse). So the magnitude inflate must come from **Stage B
+(Cholesky-Banachiewicz) reverse or Stage C (extraction) reverse**.
+
+Hypothesis for Stage C: the
+`mass_mat_L[i, j] = mass_mat_L_bw[1, j_pr, i_pr] / clamp(a, EPS, inf)`
+forward, where `a = mass_mat_L_bw[1, i_pr, i_pr]` (diagonal), has a
+reverse that lets `mass_mat_L.grad` flow into both `mass_mat_L_bw[1,
+j_pr, i_pr].grad` (numerator) and `mass_mat_L_bw[1, i_pr, i_pr].grad`
+(denominator). For Cholesky factor diagonals ~0.1-1, the 1/a^2 derivative
+through the denominator amplifies. Plus the `mass_mat_D_inv = 1/a^2`
+side which inflates further.
+
+Hypothesis for Stage B: each Cholesky-Banachiewicz pair-iteration
+divides `(mass_mat_L_bw[0, i_pr, j_pr] - sum) / clamp(mass_mat_L_bw[1,
+j_pr, j_pr], EPS, inf)`. The denominator chain rule accumulates across
+all subsequent iterations.
+
+Action for next session: instrument mass_mat_L.grad and
+mass_mat_L_bw[1].grad immediately before/after each Stage A/B/C
+.grad call to find where the 2300× inflate is introduced. Then
+correct the formula (or split Stage B/C further) so the seeded
+mass_mat.grad matches the IFT prediction. Once mass_mat.grad is
+correct in magnitude, the partial manual chain rule to
+cinr_inertial.grad + cdof_vel.grad should give a meaningful
+contribution proportional to the J5 mismatch instead of being
+washed out at 1e-9.
+
+### Tried but unsuccessful in 2026-05-12 second session
+
+1. **Standalone Phase B `kernel_compute_mass_matrix_assemble_bw`
+   forward+.grad** — adstack mid-push of mass_mat from a second-source
+   forward, interleaving with `kernel_forward_dynamics_without_qacc.grad`'s
+   internal forward+reverse pair, inflated chain to 10⁴× and broke
+   mismatch (7e-6 → 0.08).
+2. **Python-side manual chain to cdof_vel.grad only** — chain magnitude
+   ~4e-10 per step, no visible effect on mismatch (was washed out by the
+   too-large mass_mat.grad source).
+3. **Python-side full manual chain to cdof_vel.grad + cinr_inertial.grad
+   (with inertial_mul + crb-subtree reverses worked out)** — same
+   problem: chain magnitude proportional to mass_mat.grad source, which
+   is 2300× too large. cinr_inertial.grad contribution alone is ~1.78e-9
+   to u.grad, far below the 7e-6 mismatch.
+
+Both items 2 and 3 were mathematically correct chain rules but ineffective
+because `mass_mat.grad` itself is corrupted upstream.
