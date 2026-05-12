@@ -300,6 +300,83 @@ def _grad_matches_fd(
     )
 
 
+def _grad_matches_fd_multistep(
+    scene_ana,
+    robot_ana,
+    scene_fd,
+    robot_fd,
+    init_inputs,  # list[np.ndarray] — one input per timestep, each shape matches the setter's expectation
+    apply_fn,  # callable(robot, x): apply x via a @tracked setter
+    loss_fn,  # callable(scene, robot) -> scalar tensor
+    *,
+    label: str,
+    rtol: float = 1e-4,
+    atol: float = 1e-6,
+    eps: float = 1e-5,
+):
+    """Multi-step variant of `_grad_matches_fd`.
+
+    Forwards `N = len(init_inputs)` simulator steps, applying a different
+    `@tracked`-setter input at each step. After `loss.backward()`, the
+    simulator must produce a correct adjoint for each step's input
+    independently (i.e. `scene._backward()` correctly walks the per-substep
+    `process_input_grad` chain).
+
+    The FD reference perturbs each entry of each step's input separately
+    and re-runs the full N-step trajectory on `scene_fd`. Cost is
+    O(N · sum_inputs_size) forward runs of N steps each; with N=10 and
+    n_dofs ~ 3-7 this is ~600-1400 step calls per topology, ~1-2s total.
+    """
+    N = len(init_inputs)
+    base_np = [np.asarray(inp, dtype=np.float64).copy() for inp in init_inputs]
+
+    # --- analytical (diff-mode scene) ---
+    scene_ana.reset()
+    x_anas = []
+    for t in range(N):
+        x = gs.tensor(base_np[t], dtype=gs.tc_float, requires_grad=True)
+        x_anas.append(x)
+        apply_fn(robot_ana, x)
+        scene_ana.step()
+    loss = loss_fn(scene_ana, robot_ana)
+    assert loss.requires_grad, f"[{label}] loss does not require grad — output is not grad-aware"
+    loss.backward()
+    ana_grads = []
+    for t, x in enumerate(x_anas):
+        assert x.grad is not None, f"[{label}] step {t}: x.grad is None after backward"
+        ana_grads.append(x.grad.detach().cpu().numpy().copy())
+
+    # --- central FD (production-mode scene): for each (t, i) entry, run the
+    # full N-step trajectory twice with the perturbation injected only at
+    # step t. All other steps use the original input.
+    fd_grads = [np.zeros_like(b) for b in base_np]
+
+    def _run_traj_with_perturb(t_perturb, i_perturb, sign):
+        scene_fd.reset()
+        for s in range(N):
+            inp = base_np[s].copy()
+            if s == t_perturb:
+                inp.reshape(-1)[i_perturb] += sign * eps
+            apply_fn(robot_fd, gs.tensor(inp, dtype=gs.tc_float))
+            scene_fd.step()
+        return float(loss_fn(scene_fd, robot_fd).detach().cpu())
+
+    for t in range(N):
+        for i in range(base_np[t].size):
+            loss_p = _run_traj_with_perturb(t, i, +1)
+            loss_m = _run_traj_with_perturb(t, i, -1)
+            fd_grads[t].reshape(-1)[i] = (loss_p - loss_m) / (2.0 * eps)
+
+    for t in range(N):
+        assert_allclose(
+            torch.from_numpy(ana_grads[t]),
+            torch.from_numpy(fd_grads[t]),
+            rtol=rtol,
+            atol=atol,
+            err_msg=f"[{label}] step {t}: FD vs analytical mismatch",
+        )
+
+
 # loss factories — all use sum-of-squared-deviation to a fixed random target so
 # every entry of the input has a nontrivial sensitivity. Targets and outputs are
 # both flattened before the subtraction so multi-link shapes (B, n_links, 3|4)
@@ -673,3 +750,73 @@ def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision):
             label="J5 control_dofs_force → links_pos",
             **tol_default,
         )
+
+
+# ---------------------------------------------------------------------------
+# Multi-step gradient verification — exercises cross-step adjoint propagation.
+# ---------------------------------------------------------------------------
+
+
+# Known issue: J4/J5 multi-step `control_dofs_force` over-counts the gradient
+# because `cdof_*` / `cinr_*` / `cd_*` / `cfrc_*` `.grad` fields leak between
+# backward substeps. The leak is the *visible* symptom of a deeper silent-AD
+# bug: chain rule for these fields silently drops contributions that should
+# flow into `qpos.grad` (Phase B family). On single-step tests the lost
+# contributions stay inside atol; multi-step backward stacks the lost grads
+# `N` times, breaking the FD comparison. Naively zeroing the leak fields
+# closes the cross-substep leak but ALSO discards the silently-lost-but-
+# legitimate chain, regressing J1's free-body rotation DOFs.
+_J4J5_KNOWN_FAIL = pytest.mark.xfail(
+    strict=True,
+    reason="multi-step cdof_*/cinr_*/cd_*/cfrc_* silent-AD chain loss — see notes/",
+)
+
+_MULTISTEP_TOPOLOGIES = [
+    pytest.param(MJCF_FREE, "J1 freejoint", 6, _loss_state_pos, (3,), 161, id="J1_free"),
+    pytest.param(MJCF_REVOLUTE, "J2 revolute", 1, _loss_state_pos, (3,), 162, id="J2_revolute"),
+    pytest.param(MJCF_PRISMATIC, "J3 prismatic", 1, _loss_state_pos, (3,), 163, id="J3_prismatic"),
+    pytest.param(
+        MJCF_FREE_REV, "J4 free+revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev", marks=_J4J5_KNOWN_FAIL
+    ),
+    pytest.param(MJCF_REV_CHAIN3, "J5 chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3", marks=_J4J5_KNOWN_FAIL),
+]
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("mjcf_str, name, n_dofs, loss_factory, output_shape, seed", _MULTISTEP_TOPOLOGIES)
+def test_diff_fk_multistep_control_force(show_viewer, mjcf_str, name, n_dofs, loss_factory, output_shape, seed):
+    """Per-topology check that `control_dofs_force` applied with a *different*
+    input at each of N=10 steps produces per-step gradients that match FD.
+
+    This is the SHAC training pattern: the RL actor outputs a fresh force
+    every step, and `loss.backward()` must route the adjoint correctly back
+    to each step's force tensor via `process_input_grad` walking the
+    `_tgt_buffer` in reverse. Single-step tests don't exercise cross-step
+    adjoint propagation — this fills that gap.
+
+    fp64 + single env only: N=10 with batched + fp32 makes the test slow
+    (~30s per topology) and the fp32 + batched ulps-level noise across
+    multiple steps stacks up enough to require relaxed tolerances that
+    obscure real bugs. Single-step tests already cover fp32 + batched
+    against the same setter.
+    """
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(mjcf_str, n_envs=0)
+    B = _batch_size(scene_ana)
+    target = _target((B, *output_shape), seed=seed)
+
+    # 10 distinct force inputs, one per step.
+    N = 10
+    init_inputs = [_rand_np((n_dofs,), seed=seed * 100 + t) for t in range(N)]
+
+    _grad_matches_fd_multistep(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_inputs=init_inputs,
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=loss_factory(target),
+        label=f"{name} control_dofs_force × {N} steps",
+    )

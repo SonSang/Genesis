@@ -1368,6 +1368,30 @@ class RigidSolver(KinematicSolver):
             rigid_adjoint_cache=self._rigid_adjoint_cache,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
+        # Clear `acc_smooth_bw` value AND its `.grad` before this backward
+        # substep's work. Two leak channels:
+        #
+        #   (1) value: previous backward substep's per-DOF Step 1 writes
+        #       leak into this substep's Step 2 BW inside `self.substep(f)`.
+        #   (2) `.grad`: `kernel_compute_qacc.grad` and
+        #       `kernel_solve_mass_step2_reverse_bw` both atomic_add into
+        #       `acc_smooth_bw.grad`; without explicit clearing it
+        #       accumulates across substeps, producing the multi-step
+        #       `ana[t] = FD[t] + FD[t+1]` over-counting on single-link cases.
+        #
+        # NB: a kernel-side `.grad = 0.0` loop is insufficient — Quadrants
+        # silently drops `.grad` writes from inside `@qd.kernel`. The Python-
+        # side `qd_zero_grad` goes through `qd_to_torch(grad, copy=False)
+        # .zero_()`, an in-place memset on the underlying device buffer.
+        #
+        # Multi-link entities (J4/J5) need additional fixes — other dofs_state
+        # / links_state intermediates also carry stale residue at substep end
+        # (cdof_*, cinr_*, cd_*, cfrc_*), but naively zeroing them ALSO drops
+        # silently-lost-but-legitimate chain rule contributions, regressing
+        # J1's free-body rotation DOFs. Tracked as a separate diagnostic.
+        if self._requires_grad:
+            kernel_zero_acc_smooth_bw(self.dofs_state)
+            qd_zero_grad(self.dofs_state.acc_smooth_bw)
         self.substep(f)
 
         # =================== Backward substep ======================
