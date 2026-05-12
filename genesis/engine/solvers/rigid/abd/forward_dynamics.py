@@ -861,6 +861,136 @@ def kernel_solve_mass_step1_one_dof_bw(
 # `mass_mat_mask` guard, or the two top-level ndranges in
 # `func_compute_qacc`. Workaround: run Step 2 reverse manually as a
 # separate kernel after `kernel_compute_qacc.grad`.
+@qd.kernel(fastcache=True)
+def kernel_factor_mass_stage_a_bw(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Stage A of the BW-path factor_mass: copy mass_mat (symmetric) into
+    `mass_mat_L_bw[0]` using perturbed indices.
+
+    Forward:
+      mass_mat_L_bw[0, i_pr, j_pr] = mass_mat[i_d, j_d]
+      mass_mat_L_bw[0, j_pr, i_pr] = mass_mat[i_d, j_d]  (symmetric)
+    where i_pr = (start + end - 1) - i_d, j_pr similarly.
+
+    Reverse (Quadrants auto-AD):
+      mass_mat[i_d, j_d].grad += mass_mat_L_bw[0, i_pr, j_pr].grad
+                              +  mass_mat_L_bw[0, j_pr, i_pr].grad
+
+    Separating into a standalone kernel makes Quadrants AD reverse this
+    chain in isolation, bypassing the silent drop inside the bigger
+    `kernel_forward_dynamics_without_qacc.grad`.
+    """
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
+        if rigid_global_info.mass_mat_mask[i_e, i_b]:
+            entity_dof_start = entities_info.dof_start[i_e]
+            entity_dof_end = entities_info.dof_end[i_e]
+            for i_d0 in range(entities_info.n_dofs[i_e]):
+                i_d = entity_dof_start + i_d0
+                i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
+                for j_d in range(entity_dof_start, i_d + 1):
+                    j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
+                    rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
+                    rigid_global_info.mass_mat_L_bw[0, j_pr, i_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
+
+
+@qd.kernel(fastcache=True)
+def kernel_factor_mass_stage_b_pair_bw(
+    p_i0: qd.int32,
+    p_j0: qd.int32,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Stage B of the BW-path factor_mass: ONE pair (p_i0, p_j0) of the
+    Cholesky-Banachiewicz factorization (inner loop on p_k0 is fine — it
+    only reads from earlier pairs which are now in their own kernel calls).
+
+    Phase B-style per-pair split: original `for p_i0: for p_j0: ...`
+    becomes Python-side sequential kernel calls. Cross-iter dependency
+    `mass_mat_L_bw[1, ...]` between outer (p_i0, p_j0) pairs becomes
+    cross-kernel dependency that Quadrants AD reverses correctly per-pair.
+
+    Caller must invoke this in ascending (p_i0, p_j0) order for forward,
+    descending for `.grad`.
+    """
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
+        if rigid_global_info.mass_mat_mask[i_e, i_b]:
+            if p_i0 < entities_info.n_dofs[i_e] and p_j0 <= p_i0:
+                EPS = rigid_global_info.EPS[None]
+                entity_dof_start = entities_info.dof_start[i_e]
+                i_pr = entity_dof_start + p_i0
+                j_pr = entity_dof_start + p_j0
+
+                sum = gs.qd_float(0.0)
+                # Static upper bound for adstack sizing; conditional skip
+                # past `p_j0` keeps the loop body inert for higher k.
+                for p_k0 in range(qd.static(static_rigid_sim_config.max_n_dofs_per_entity)):
+                    if p_k0 < p_j0:
+                        k_pr = entity_dof_start + p_k0
+                        sum = sum + (
+                            rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
+                            * rigid_global_info.mass_mat_L_bw[1, j_pr, k_pr, i_b]
+                        )
+
+                a = rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] - sum
+                b = qd.math.clamp(
+                    rigid_global_info.mass_mat_L_bw[1, j_pr, j_pr, i_b],
+                    EPS,
+                    qd.math.inf,
+                )
+                if p_i0 == p_j0:
+                    rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = qd.sqrt(qd.math.clamp(a, EPS, qd.math.inf))
+                else:
+                    rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = a / b
+
+
+@qd.kernel(fastcache=True)
+def kernel_factor_mass_stage_c_bw(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Stage C of the BW-path factor_mass: extract mass_mat_L and
+    mass_mat_D_inv from mass_mat_L_bw[1].
+
+    Forward:
+      a = mass_mat_L_bw[1, i_pr, i_pr]
+      mass_mat_L[i_d, j_d] = mass_mat_L_bw[1, j_pr, i_pr] / clamp(a, EPS, inf)
+      if i_d == j_d:
+          mass_mat_D_inv[i_d] = 1.0 / clamp(a**2, EPS, inf)
+
+    Reverse handled by Quadrants AD on this isolated kernel.
+    """
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
+        if rigid_global_info.mass_mat_mask[i_e, i_b]:
+            EPS = rigid_global_info.EPS[None]
+            entity_dof_start = entities_info.dof_start[i_e]
+            entity_dof_end = entities_info.dof_end[i_e]
+            for i_d0 in range(entities_info.n_dofs[i_e]):
+                for i_d1 in range(i_d0 + 1):
+                    i_d = entity_dof_start + i_d0
+                    j_d = entity_dof_start + i_d1
+                    i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
+                    j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
+
+                    a = rigid_global_info.mass_mat_L_bw[1, i_pr, i_pr, i_b]
+                    rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat_L_bw[
+                        1, j_pr, i_pr, i_b
+                    ] / qd.math.clamp(a, EPS, qd.math.inf)
+
+                    if i_d == j_d:
+                        rigid_global_info.mass_mat_D_inv[i_d, i_b] = 1.0 / qd.math.clamp(a * a, EPS, qd.math.inf)
+
+
 @qd.kernel
 def kernel_solve_mass_step2_reverse_bw(
     dofs_state: array_class.DofsState,
