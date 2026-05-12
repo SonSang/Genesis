@@ -119,6 +119,51 @@ The true fix is to find the silent drop site (similar to the Phase B
 investigation that found Step 1 cross-iter AD and the trivial Step 2 mul)
 and patch the chain rule there, not to paper over with bulk zeroing.
 
+### Root cause located (2026-05-11): silent drop inside `kernel_update_cartesian_space.grad`
+
+Kernel-by-kernel `.grad` dump on J5 N=1 backward (via the per-call
+`_debug_grad_dump` instrumentation in `substep_pre_coupling_grad`) shows:
+
+```
+after step_2.grad                            qpos.grad=4.08e-5  cinr.grad=0
+after compute_qacc.grad                      qpos.grad=4.08e-5  cinr.grad=0
+after fwd_dynamics_without_qacc.grad         qpos.grad=4.08e-5  cinr.grad=1.6e-8  ← Coriolis chain fills cinr/cdof.grad
+after initial-UCS+FV.grad (end)              qpos.grad=4.08e-5  cinr.grad=1.6e-8  ← unchanged!
+```
+
+`kernel_forward_dynamics_without_qacc.grad` correctly populates
+`cinr_*.grad`, `cdof_*.grad` via the Coriolis terms `f1 = cinr · cdd`,
+`f2 = cinr · cd`, etc.. The reverse should be: `cinr.grad → i_pos.grad,
+i_quat.grad → qpos.grad` (via `qd_transform_inertia_by_trans_quat` and the
+FK chain in `func_forward_kinematics_entity`).
+
+But in the current `substep_pre_coupling_grad` pipeline, the kernel that
+handles that reverse is `kernel_update_cartesian_space_one_link.grad` —
+and the one_link split was created specifically as a workaround for a
+J4/J5 cross-link adjoint silent drop in the original
+`kernel_update_cartesian_space.grad`. The split function
+`func_forward_kinematics_entity_one_link` only handles link transforms
+(`pos`, `quat`, `pos_bw`, `quat_bw`); it does **not** write `cinr_*` or
+`cdof_*`. So its `.grad` doesn't include the cinr/cdof reverse, and the
+`cinr.grad/cdof.grad` residue sits untouched until the next substep
+atomic_adds onto it.
+
+Adding a call to the *original* `kernel_update_cartesian_space.grad`
+after `fwd_dynamics_without_qacc.grad` does drain `cinr_*.grad` and
+`cdof_*.grad` (verified: both go to zero), **but `qpos.grad` doesn't
+accumulate** — the chain rule fires through some layer of `@qd.func`
+nesting but loses the contribution by the time it reaches `qpos`. This
+is the same Phase B-family silent drop signature.
+
+So the true fix needs the same Phase B treatment: write a manual reverse
+kernel for the cinr/cdof → qpos chain rule, bypassing the
+`@qd.func`-nested Quadrants AD that drops the contribution.
+
+Diagnostic helpers added to `_debug_grad_dump` for this investigation
+(in `genesis/engine/solvers/rigid/rigid_solver.py`): `cinr_*`, `cdof_*`,
+`crb_*`, `cfrc_applied_*`, `cfrc_coupling_*`, `i_pos`, `i_quat`. Run
+with `GENESIS_DEBUG_GRAD=1`.
+
 ## Verifying
 
 CPU + GPU, fp64:
