@@ -138,28 +138,33 @@ def qd_rotvec_to_quat(rotvec, eps):
 def qd_quat_to_R(quat, eps):
     """
     Converts quaternion to 3x3 rotation matrix.
+
+    Branch-free, division-stable rewrite — same family of fix as
+    `qd_rotvec_to_quat` above. The previous `if d > eps: ... 2.0 / d` form
+    silently dropped the reverse-mode chain through this function (and
+    therefore through `qd_transform_inertia_by_trans_quat` and `cinr.grad
+    → quat.grad`), surfacing as input-dependent gradient noise on multi-
+    link chains (J4/J5 multi-step `control_dofs_force`).
+
+    `d` is `quat.norm_sqr()` which for unit quaternions is ≈1; regularizing
+    by `+eps` shifts the result by O(eps) which is below round-off.
     """
-    R = qd.Matrix.identity(gs.qd_float, 3)
+    d = quat.norm_sqr() + eps
+    s = 2.0 / d
+    w, x, y, z = quat
+    xs, ys, zs = x * s, y * s, z * s
+    wx, wy, wz = w * xs, w * ys, w * zs
+    xx, xy, xz = x * xs, x * ys, x * zs
+    yy, yz, zz = y * ys, y * zs, z * zs
 
-    d = quat.norm_sqr()
-    if d > eps:
-        s = 2.0 / d
-        w, x, y, z = quat
-        xs, ys, zs = x * s, y * s, z * s
-        wx, wy, wz = w * xs, w * ys, w * zs
-        xx, xy, xz = x * xs, x * ys, x * zs
-        yy, yz, zz = y * ys, y * zs, z * zs
-
-        R = qd.Matrix(
-            [
-                [1.0 - (yy + zz), xy - wz, xz + wy],
-                [xy + wz, 1.0 - (xx + zz), yz - wx],
-                [xz - wy, yz + wx, 1.0 - (xx + yy)],
-            ],
-            dt=gs.qd_float,
-        )
-
-    return R
+    return qd.Matrix(
+        [
+            [1.0 - (yy + zz), xy - wz, xz + wy],
+            [xy + wz, 1.0 - (xx + zz), yz - wx],
+            [xz - wy, yz + wx, 1.0 - (xx + yy)],
+        ],
+        dt=gs.qd_float,
+    )
 
 
 @qd.func
@@ -338,6 +343,11 @@ def qd_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
 
 @qd.func
 def qd_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
+    # `trans = trans * i_mass` rebinds the input parameter — Quadrants AD then
+    # has to track two distinct uses of the same SSA name (the original `trans`
+    # for `hhT`, the rebound one for the return), and silently drops part of
+    # the reverse-mode chain back to the original input. Use a fresh local
+    # `new_trans` for the output.
     x, y, z = trans.x, trans.y, trans.z
     xx, xy, xz, yy, yz, zz = x * x, x * y, x * z, y * y, y * z, z * z
     hhT = qd.Matrix(
@@ -350,9 +360,9 @@ def qd_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
 
     R = qd_quat_to_R(quat, eps)
     i = R @ i_inertial @ R.transpose() + hhT * i_mass
-    trans = trans * i_mass
+    new_trans = trans * i_mass
 
-    return i, trans, quat, i_mass
+    return i, new_trans, quat, i_mass
 
 
 @qd.func
