@@ -156,40 +156,64 @@ post-fwd_dyn.grad  → ctrl_force.grad ← 우리가 보고 싶은 값
 > **올바른 방법**: kernel 직전에 Python 에서 primal 값을 dump 하고 그 값으로
 > numpy chain 계산. 우리 `/tmp/numpy_verify.py` 패턴 참고.
 
-Stage 별 chain 이 정확하면 Step 6 으로 (primal 의심). 일치하지 않으면
-Step 5 로.
+**Exit 조건 도달 후**: 갈리는 stage 의 kernel 을 Step 5 로 (manual backward
+로 대체 + 진단적 결과 관찰).
 
-### Step 5: Manual backward kernel 구현 + 수식 검증
+### Step 5: Manual backward 로 대체 + 결과 관찰 (진단적 시도)
 
-**구현 전 결정**: 진짜 autodiff bug 인가? (Case 1 / Case 2 의 기준 확인)
-간단한 fix 로 해결 가능하면 manual 안 쓰는 게 우선.
+Step 4 에서 식별된 buggy kernel 을 manual backward 로 대체. **목적은 해결
+자체가 아니라 *해결되는지를 관찰* 해서 bug 의 정체를 분류** 하는 것:
 
-Manual backward 작성한 후 *반드시* 수식 검증부터:
+- **manual 로 해결됨** → autodiff bug 확정. Step 6 으로 (minimal repro
+  + Quadrants 팀 보고).
+- **manual 로도 해결 안 됨** → autodiff 가 아니라 *입력 (forward primal
+  또는 입력 .grad)* 이 잘못된 것. Step 7 로 (primal 검사).
 
-```python
-# numpy verification pattern
-# 1. kernel 의 실제 primal 을 Python 에서 dump (직전 monkey-patch)
-# 2. 같은 primal 로 numpy 에서 chain rule 계산
-# 3. kernel 출력과 비교
-diff = numpy_result - kernel_result
-assert np.abs(diff).max() < 1e-15  # FP64 floor
-```
+**구현 절차**:
 
-이게 없으면 Step 6 에서 "manual 의 수식이 틀린건지 primal 문제인지" 구분
-불가능. 우리 세션에서 이 검증이 manual kernel 의 무죄 입증의 결정적 단계
-였음.
+1. **수식 자체 사전 검증** (필수): manual kernel 작성 후 numpy verification.
+   ```python
+   # 1. kernel 의 실제 primal 을 Python 에서 dump (직전 monkey-patch)
+   # 2. 같은 primal 로 numpy 에서 chain rule 계산
+   # 3. kernel 출력과 비교
+   diff = numpy_result - kernel_result
+   assert np.abs(diff).max() < 1e-15  # FP64 floor
+   ```
+   이 검증 없으면 step 6 의 분기 ("baseline 과 같은 wrong vs 다른 wrong")
+   가 무의미. Manual 수식 자체 bug 인지 진짜 primal 문제인지 구분 불가능.
 
-### Step 6: 결과 비교로 정량 분기
+2. **Wire 해서 production 적용**: auto-AD 의 `kernel.grad` 호출 자리에
+   manual kernel 호출 삽입 (또는 대체).
 
-Manual backward 적용 후:
+3. **테스트 재실행** (sweep + per-DOF) 해서 rel error 변화 관찰.
 
-- **결과가 baseline 의 wrong 값과 *동일* (또는 매우 유사)** →
-  **primal 의심.** Step 7 로.
-- **결과가 baseline 과 다른 wrong 값** → manual 의 chain rule 또는 더
-  상류 chain 에 버그. Step 5 로 돌아가서 수식 재검증, 또는 step 4 의
-  더 상류 stage 재검토.
+### Step 6: 결과에 따른 분기
 
-### Step 7: Forward primal 검사
+#### Case A: Manual backward 가 해결함 ✅ → **Autodiff bug 확정**
+
+Bug 의 정체: Step 4 에서 식별한 kernel 의 *auto-AD reverse* 가 silent drop
+또는 잘못된 chain rule 을 생성하는 Quadrants AD bug.
+
+**다음 작업**:
+1. **Minimal repro script 작성** — buggy kernel 만 standalone 으로 추출,
+   같은 primal/input.grad 값으로 호출 → silent drop 재현.
+   - 입력 primal 값을 Python 에서 dump (직전 monkey-patch).
+   - Standalone 환경에서 같은 입력 + 같은 forward 수식 + Quadrants AD `.grad`
+     로 재현.
+   - Verify: standalone 환경에서도 manual 의 numpy 결과와 auto-AD 결과
+     불일치 확인 → silent drop reproduced.
+2. **Quadrants 팀에 보고** — minimal repro 첨부.
+3. **Production code 유지** — manual backward 는 fix 가 들어오기 전까지
+   임시 우회로 (Case 1 정당화).
+
+#### Case B: Manual backward 가 해결 못함 ❌ → **입력이 잘못됨**
+
+Bug 의 정체: Step 4 에서 식별한 kernel 의 *입력* 이 잘못된 값. Kernel 자체
+(또는 manual replacement) 는 정확하지만 wrong input → wrong output.
+
+**다음 작업**: Step 7 로 (primal / 입력 .grad 검사).
+
+### Step 7: Forward primal / 입력 검사
 
 Backward 시점의 primal 값을 kernel 직전에 Python 에서 dump하고 *예상값* 과
 비교. 예상값은 BW chain 을 거슬러 올라가서 계산:
@@ -383,16 +407,19 @@ rs.kernel_xxx = wrapped
    - 각 BW stage 의 .grad 값 dump (GENESIS_DEBUG_GRAD=2)
    - kernel 의 실제 primal 을 Python 에서 dump 해서 numpy chain 계산
    - 어느 stage 에서 manual vs kernel 결과가 처음 갈리는지 식별
-5. 갈리는 stage 가 발견되면, 그 stage 의 kernel 을 자세히 조사:
+   - 🎯 EXIT 조건: "kernel X 가 .grad Y 에 wrong 값 Z 를 쓴다" 한 줄 답.
+5. 갈리는 stage 의 kernel 검토:
    - 코드 자체에 오류? → fix
-   - 수식 정상 but autodiff 결과 wrong → Step 6 manual backward
-   - Manual backward 도 wrong → Step 7 primal 검사
-6. Manual backward 구현 + numpy verification (max diff < 1e-15)
-   - 검증 통과 후 production 적용
-   - 결과 baseline 과 동일 wrong → 그 stage 의 input primal 문제 (Step 7)
-   - 결과 다른 wrong → manual 수식 bug 또는 더 상류 chain
-7. Forward primal 검사:
-   - 문제 stage 의 kernel 직전 primal 을 Python 에서 dump
+   - 수식 정상이면 → manual backward 작성 + numpy verification (수식 검증)
+                    → production 적용 → 결과 관찰 (진단적 시도)
+6. 결과 분기:
+   - manual 로 해결됨 → autodiff bug 확정
+     → minimal repro 작성 + Quadrants 팀 보고
+     → manual 은 임시 우회로 유지
+   - manual 로도 해결 안됨 → 입력 (forward primal 또는 입력 .grad) 문제
+     → Step 7
+7. Forward primal / 입력 검사:
+   - 문제 stage 의 kernel 직전 primal / 입력 .grad 를 Python 에서 dump
    - 예상값과 비교 (chain 거슬러 올라가서 계산)
    - 다르면: view aliasing / state restore / is_backward 동작 등 확인
 ```
