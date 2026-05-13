@@ -77,19 +77,30 @@ for seed in seeds:
             if rel > threshold: flag(seed, t, d)
 ```
 
-### Step 3: N=1 vs N≥2 비대칭 분기 — 가장 강한 진단 신호
+### Step 3: N=1 vs N≥2 비대칭 — 정보 수집 단계 (skip 금지)
 
-이건 **반드시 먼저 확인**. 결과에 따라 디버깅 방향이 완전히 달라짐:
+이건 **정보 수집** 단계이지 *분기점이 아님*. 결과는 step 4 의 *dump 범위*
+를 좁히는 데 사용. **어떤 결과든 step 4 로 진행해서 chain dump + manual
+chain rule 검증부터 거쳐야 함**:
 
-- **N=1 정확 + N≥2 fail** → single-substep backward 는 정상.
-  버그는 *cross-substep state propagation* 에 있음.
-  → Step 6 으로 직행 (primal/state 의심).
-- **N=1 부터 fail** → single-step backward 로직 자체에 버그.
-  → Step 4 로 진행.
-- **N=1 정확 + N=2 정확 + N≥4 fail** → 누적 numerical noise 가능성.
+- **N=1 정확 + N≥2 fail** → 버그가 cross-substep state propagation 에 있을
+  *가능성이 높음*. Step 4 에서 첫 번째 BW substep (t=N-1) 의 chain 은
+  대조용으로, 두 번째 BW substep (t=N-2) 의 chain 을 집중 dump.
+- **N=1 부터 fail** → single-step backward 로직 자체에 버그. Step 4 에서
+  t=N-1 (= N=1 case) 의 chain 을 dump.
+- **N=1 정확 + N=2 정확 + N≥4 fail** → 누적 numerical noise 가능성도 있지만
   진짜 버그라면 chain 의 비선형성 또는 cross-substep accumulation.
 
-### Step 4: Backward chain dump 후 manual chain rule 검증
+> ⚠️ **함정**: N=1 정확 + N≥2 fail 만 보고 *primal staleness 의심* 으로
+> 직행하면 안 됨. 그건 *하나의 가능성*일 뿐이고, chain 의 어디서 잘못된
+> 값이 도입되는지 모르는 상태에서는 가설 검증/반증의 사이클을 효율적으로
+> 돌릴 수 없음. **step 4 의 chain dump 가 정확한 stage 를 알려준다 →
+> 그 다음에 step 7 의 primal 검사가 의미 있음.**
+
+### Step 4: Backward chain dump 후 manual chain rule 검증 (필수)
+
+**Skip 불가**. 어떤 step 3 결과든 이걸 거쳐서 chain 의 어느 stage 에서
+잘못된 값이 도입되는지 정확히 식별해야 함.
 
 Bad entry 에 기여하는 함수들을 backward chain 따라 역추적. 각 stage 에서
 `.grad` field 를 dump (`GENESIS_DEBUG_GRAD=2`).
@@ -210,11 +221,17 @@ Manual kernel 구현해놓고 검증 없이 production 적용. 만약 manual 자
 
 대응: numpy verification 필수.
 
-### P3. N=1 vs N≥2 비대칭 무시
+### P3. N=1 vs N≥2 비대칭 무시 (또는 과도하게 신뢰)
 N≥2 가 catastrophic 이면 single-step 로직에 집중하기 쉬움. 그러나 N=1 이
 정확하면 single-step 무죄. 시간 낭비 방지.
 
 대응: Step 3 분기를 가장 먼저 수행.
+
+**역방향 함정**: N=1 정확 + N≥2 fail 이라고 *primal staleness 의심* 으로
+**직행하지 말 것**. 그건 가능한 원인 중 하나일 뿐. Chain 의 어느 stage 에서
+잘못된 값이 들어오는지 모르면 가설을 무한히 시도하게 됨 (UCS refresh,
+cache copy, state 재계산 등). 반드시 step 4 (chain dump) 거쳐서 *어느
+stage* 가 문제인지 식별 → 그 stage 의 입력 / primal 검사 → fix.
 
 ### P4. FD precision floor 와 real bug 혼동
 FD 의 `(lp - lm) / (2*eps)` 가 FP64 precision 으로 inflate 되어 rel err
@@ -322,19 +339,27 @@ rs.kernel_xxx = wrapped
 ## TL;DR (cheat sheet)
 
 ```
-Detected: J? N=? max rel = ?
-├── N=1 정확? 
-│   ├── Yes → Step 7 (primal 의심, view aliasing 의심)
-│   └── No  → Step 4 (chain dump + manual rule)
-├── Manual chain (kernel 의 실제 primal 으로!) = kernel 출력?
-│   ├── Yes → Step 7 (primal 의심)
-│   └── No  → autodiff issue 또는 chain bug 의심
-├── Autodiff bug 의심 시:
-│   ├── 간단한 fix 가능? → fix
-│   ├── Manual backward 만들면 비용 효율적? (Case 2) → manual
-│   └── 그 외 → minimal repro + Quadrants 팀 보고 + 임시 manual
-└── Manual backward 검증 → numpy verification (max diff < 1e-15)
-    └── Production 적용 후 결과:
-        ├── baseline 과 동일 wrong → primal 문제 (Step 7)
-        └── 다른 wrong → manual 수식 bug 또는 더 상류 chain bug
+1. Detect: FD sweep, mask |fd|>atol, multi-seed consistency 확인
+2. Localize: per-DOF + per-step dump → bad (seed, t, DOF) 식별
+3. N=1 vs N≥2 정보 수집 (skip 금지 but 분기점 아님):
+   - N=1 정확 + N≥2 fail → step 4 에서 t<N-1 BW chain 집중
+   - N=1 부터 fail        → step 4 에서 t=N-1 BW chain 집중
+   ⚠️ 이 결과로 step 4 를 SKIP 하면 안 됨. 어디가 잘못됐는지
+      모르는 상태에서 primal 의심에 직행하면 가설 무한 시도 함정.
+4. Chain dump + manual chain rule (필수):
+   - 각 BW stage 의 .grad 값 dump (GENESIS_DEBUG_GRAD=2)
+   - kernel 의 실제 primal 을 Python 에서 dump 해서 numpy chain 계산
+   - 어느 stage 에서 manual vs kernel 결과가 처음 갈리는지 식별
+5. 갈리는 stage 가 발견되면, 그 stage 의 kernel 을 자세히 조사:
+   - 코드 자체에 오류? → fix
+   - 수식 정상 but autodiff 결과 wrong → Step 6 manual backward
+   - Manual backward 도 wrong → Step 7 primal 검사
+6. Manual backward 구현 + numpy verification (max diff < 1e-15)
+   - 검증 통과 후 production 적용
+   - 결과 baseline 과 동일 wrong → 그 stage 의 input primal 문제 (Step 7)
+   - 결과 다른 wrong → manual 수식 bug 또는 더 상류 chain
+7. Forward primal 검사:
+   - 문제 stage 의 kernel 직전 primal 을 Python 에서 dump
+   - 예상값과 비교 (chain 거슬러 올라가서 계산)
+   - 다르면: view aliasing / state restore / is_backward 동작 등 확인
 ```
