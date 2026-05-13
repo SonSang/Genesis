@@ -102,6 +102,39 @@ chain rule 검증부터 거쳐야 함**:
 **Skip 불가**. 어떤 step 3 결과든 이걸 거쳐서 chain 의 어느 stage 에서
 잘못된 값이 도입되는지 정확히 식별해야 함.
 
+**🎯 최종 목표 (이걸 명시적으로 리포트해야 진행 가능)**:
+> "이 chain 에서 *어떤 함수* (kernel.grad) 가 *어떤 .grad 필드* 에 *어떤
+> 값* 을 잘못 쓰는지" 한 줄로 답할 수 있을 때까지 step 4 를 끝내지 말 것.
+
+이걸 식별하지 않고 "primal 일거다", "cross-substep leak 일거다", "ordering
+일거다" 같은 *추측* 으로 fix 시도하는 건 가이드 P3 의 함정. Fix 가 우연히
+부분적으로 작동해도 nearby DOF 가 악화되거나 다른 seed/N 에서 regression
+발생.
+
+**Backward verification 방법 (필수 순서)**:
+
+1. Bad entry (예: ctrl_force.grad[i]) 가 *어떤 stage 에서 처음 wrong*
+   되는지 확인. 끝 stage 부터 거꾸로:
+   - 최종 ctrl_force.grad — 이게 wrong
+   - 그 직전 force.grad — wrong? right?
+   - 그 직전 acc.grad — wrong? right?
+   - ...
+   각 stage 의 manual chain rule 결과 = kernel 출력 비교.
+
+2. **manual chain rule 은 *kernel 이 실제로 본 primal* 을 사용** (가장 큰
+   함정. 가정된 깨끗한 값으로 계산하면 false positive silent drop 처럼 보임).
+
+3. 처음 *kernel 출력 ≠ manual chain rule* 인 stage 를 찾으면 그게 bug 의 source.
+
+4. 그 stage 의 입력 .grad 도 검증해서 *입력이 wrong* 인지 *kernel 자체가
+   wrong* 인지 구분.
+   - 입력 wrong → 더 상류 stage 추적 (재귀)
+   - kernel 자체 wrong → step 5 (manual backward) 로
+
+> ⚠️ **함정**: 한 stage 의 chain rule 만 검증하고 그게 맞다고 "다른 곳이
+> 문제겠지" 라고 단정하지 말 것. 여러 stage 를 *모두* 비교해서 *처음으로*
+> 갈리는 곳을 찾아야 함.
+
 Bad entry 에 기여하는 함수들을 backward chain 따라 역추적. 각 stage 에서
 `.grad` field 를 dump (`GENESIS_DEBUG_GRAD=2`).
 
