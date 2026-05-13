@@ -1980,9 +1980,17 @@ class RigidSolver(KinematicSolver):
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
 
-            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos)
-            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel)
-            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc)
+            # CRITICAL: `copy=True` required — with zerocopy backend,
+            # `qd_to_numpy` returns a view of the buffer. Without copying,
+            # subsequent `kernel_save_adjoint_cache` calls during later
+            # forward substeps overwrite the same buffer, silently mutating
+            # this ckpt. The result: in BW for step `k < N-1`,
+            # `load_ckpt` reads the snapshot but it actually contains the
+            # state at start of step `k+1` (= post-step-`k`), not start of
+            # step `k`. Root cause of catastrophic J4 N≥2 rel error.
+            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
+            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)
+            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc, copy=True)
 
             for entity in self._entities:
                 entity.save_ckpt(ckpt_name)
