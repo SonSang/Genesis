@@ -1,0 +1,340 @@
+# Differentiability Debugging Guide — Genesis Rigid Body
+
+이 문서는 Genesis rigid body solver 의 differentiability bug 를 디버깅할 때
+참고하는 일반 가이드라인. 과거 세션들에서 반복적으로 빠진 함정과 그 해결
+패턴을 정리.
+
+---
+
+## Manual backward 를 쓸지 결정하는 기준
+
+**기본 원칙: autodiff 를 최대한 사용.** Manual backward 는 코드 유지보수가
+훨씬 어렵고 (수식 변경 시 forward 와 backward 양쪽 모두 수정해야 함),
+auto-AD 가 자동으로 새 chain 을 추적하지 못함.
+
+Manual backward 가 정당화되는 경우는 다음 두 가지:
+
+### Case 1: Autodiff 에 실제 버그가 있는 경우
+Quadrants AD 가 silent drop, wrong gradient 또는 reverse_segments@68 error 를
+일으키는 경우.
+
+**과거 사례:**
+- `func_solve_mass_entity` 의 cross-iteration same-buffer reads → silent drop
+  on `mass_mat.grad` chain (→ `kernel_manual_compute_qacc_bw` via IFT)
+- `kernel_compute_mass_matrix.grad` body 가 for-loop + straight-line statements
+  mix 라 `reverse_segments@68 Invalid program input for autodiff` reject
+- `update_cartesian_space.grad` 의 cross-link 가 single-kernel 일 때 silent
+  attenuation (→ per-link split)
+
+이런 경우는 가능하면 *minimal repro 를 Quadrants 팀에 보고* 하고, fix 가
+들어오기 전까지 임시 우회로 manual backward 사용.
+
+### Case 2: Autodiff 가능하지만 비용이 큰 경우
+Python-side 로 loop 를 빼서 효율성을 올리는 경우. Auto-AD 가 큰 kernel 의
+모든 intermediate 를 저장하느라 메모리/속도 부담이 큰 경우.
+
+**과거 사례:**
+- LDLT solve 의 cross-iteration dependency 를 Python-side 로 풀어 per-DOF
+  Step 1 manual reverse 로 분해 (이후 IFT 로 더 단순화됨)
+- FK 의 per-link split 으로 Jacobian rank-1 update 분리
+
+---
+
+## 디버깅 워크플로우
+
+### Step 1: Detect — FD sweep 으로 비정상 감지
+
+```python
+# 권장 sweep template
+for topology in TOPOLOGIES:
+    for N in [1, 2, 4, 8, 16, 32]:
+        for seed in seeds:  # 최소 5개, 권장 10개
+            ana, fd = measure(...)
+            rel = rel_err_t0(ana, fd, atol=1e-10)
+```
+
+**Pass criterion:**
+- `|fd| < 1e-10` (FP64 floor) 인 entry 는 rel 계산에서 mask out
+  (mask 안 하면 floor 가 inflated rel 만들어서 fake alarm)
+- N=1: max rel < 1e-9 expected (FP64 floor)
+- 1 < N ≤ 32: max rel < 0.1 (10%) 까지는 chaotic dynamics 로 인한 FD
+  divergence 가능성. 그 이상이면 real bug.
+- **같은 entry 가 여러 seed 에서 consistent 하게** 큰 rel 일 때 real bug.
+  한 seed 만 큰 건 numerical fluke 가능성 있음.
+
+### Step 2: Localize — per-DOF / per-step 으로 좁히기
+
+Sweep 의 max rel 이 어디서 오는지 분해. 어떤 DOF? 어떤 t (substep)?
+어떤 seed?
+
+```python
+# per-DOF dump template (notes/diag_j4_n2_perdof.py 참고)
+for seed in seeds:
+    ana, fd = measure(mjcf, n_dofs, N, seed)
+    for t in range(N):
+        for d in range(n_dofs):
+            rel = abs(ana[t,d] - fd[t,d]) / max(abs(fd[t,d]), atol)
+            if rel > threshold: flag(seed, t, d)
+```
+
+### Step 3: N=1 vs N≥2 비대칭 분기 — 가장 강한 진단 신호
+
+이건 **반드시 먼저 확인**. 결과에 따라 디버깅 방향이 완전히 달라짐:
+
+- **N=1 정확 + N≥2 fail** → single-substep backward 는 정상.
+  버그는 *cross-substep state propagation* 에 있음.
+  → Step 6 으로 직행 (primal/state 의심).
+- **N=1 부터 fail** → single-step backward 로직 자체에 버그.
+  → Step 4 로 진행.
+- **N=1 정확 + N=2 정확 + N≥4 fail** → 누적 numerical noise 가능성.
+  진짜 버그라면 chain 의 비선형성 또는 cross-substep accumulation.
+
+### Step 4: Backward chain dump 후 manual chain rule 검증
+
+Bad entry 에 기여하는 함수들을 backward chain 따라 역추적. 각 stage 에서
+`.grad` field 를 dump (`GENESIS_DEBUG_GRAD=2`).
+
+```
+post-loss.backward → links_pos.grad
+post-UCS.grad      → qpos.grad
+post-begin_bw_sub  → qpos_next.grad (swap from qpos.grad)
+post-step_2.grad   → qpos.grad, vel.grad, acc.grad
+post-compute_qacc  → force.grad
+post-fwd_dyn.grad  → ctrl_force.grad ← 우리가 보고 싶은 값
+```
+
+각 stage 의 입출력으로 manual chain rule 식을 numpy 로 작성해서 비교.
+
+> ⚠️ **가장 큰 함정**: Manual chain rule 에 들어가는 forward primal 값은
+> *kernel 이 실제로 보는 값* 이어야 함. 이론적 가정 (e.g., "rot0 은 identity
+> 일 것이다") 으로 계산하면 false positive 의 silent drop 으로 보임.
+>
+> **올바른 방법**: kernel 직전에 Python 에서 primal 값을 dump 하고 그 값으로
+> numpy chain 계산. 우리 `/tmp/numpy_verify.py` 패턴 참고.
+
+Stage 별 chain 이 정확하면 Step 6 으로 (primal 의심). 일치하지 않으면
+Step 5 로.
+
+### Step 5: Manual backward kernel 구현 + 수식 검증
+
+**구현 전 결정**: 진짜 autodiff bug 인가? (Case 1 / Case 2 의 기준 확인)
+간단한 fix 로 해결 가능하면 manual 안 쓰는 게 우선.
+
+Manual backward 작성한 후 *반드시* 수식 검증부터:
+
+```python
+# numpy verification pattern
+# 1. kernel 의 실제 primal 을 Python 에서 dump (직전 monkey-patch)
+# 2. 같은 primal 로 numpy 에서 chain rule 계산
+# 3. kernel 출력과 비교
+diff = numpy_result - kernel_result
+assert np.abs(diff).max() < 1e-15  # FP64 floor
+```
+
+이게 없으면 Step 6 에서 "manual 의 수식이 틀린건지 primal 문제인지" 구분
+불가능. 우리 세션에서 이 검증이 manual kernel 의 무죄 입증의 결정적 단계
+였음.
+
+### Step 6: 결과 비교로 정량 분기
+
+Manual backward 적용 후:
+
+- **결과가 baseline 의 wrong 값과 *동일* (또는 매우 유사)** →
+  **primal 의심.** Step 7 로.
+- **결과가 baseline 과 다른 wrong 값** → manual 의 chain rule 또는 더
+  상류 chain 에 버그. Step 5 로 돌아가서 수식 재검증, 또는 step 4 의
+  더 상류 stage 재검토.
+
+### Step 7: Forward primal 검사
+
+Backward 시점의 primal 값을 kernel 직전에 Python 에서 dump하고 *예상값* 과
+비교. 예상값은 BW chain 을 거슬러 올라가서 계산:
+
+```python
+# Python-side primal capture pattern
+captured = {}
+def wrapped_kernel(*args, **kwargs):
+    captured['qpos_at_bw'] = qd_to_numpy(self._rigid_global_info.qpos, copy=True)
+    captured['vel_at_bw'] = qd_to_numpy(self.dofs_state.vel, copy=True)
+    orig_kernel(*args, **kwargs)
+```
+
+**Quadrants/zerocopy 환경 specific patterns 체크:**
+
+1. **View aliasing** — 가장 자주 만나는 패턴.
+   ```bash
+   grep "qd_to_numpy\|qd_to_torch" | grep -v "copy=True"
+   ```
+   `copy=True` 없이 받은 numpy/torch array 는 underlying buffer 의 view.
+   이후 같은 buffer 가 overwrite 되면 silent mutation.
+   
+   **과거 사례 (이 가이드의 트리거):** `RigidSolver.save_ckpt` 의
+   `qd_to_numpy(_rigid_adjoint_cache.qpos)` 가 view 저장 → 다음 forward
+   substep 의 `kernel_save_adjoint_cache` 가 같은 buffer overwrite →
+   ckpt aliasing → BW 시 wrong primal load.
+
+2. **State restoration order**:
+   ```
+   prepare_backward_substep    (cache → state, UCS forward)
+   substep replay              (forward kernels in BW mode)
+   copy_next_to_curr_no_check  (vel_next → vel, qpos_next → qpos)
+   UCS.grad chain
+   begin_backward_substep      (state restore to cache + grad swap)
+   manual/auto BW kernels
+   ```
+   각 단계에서 primal field 가 어떤 timestamp 의 값을 들고 있는지 명확히.
+
+3. **`is_backward=True` 의 forward 동작 차이**: `kernel_step_2_post_integrate`
+   의 `if qd.static(not is_backward): func_copy_next_to_curr` 같이 BW mode
+   에서는 in-place update 가 skip 되는 경우 있음. 이게 primal staleness
+   를 만들 수 있음.
+
+4. **Adjoint cache slot 의미**: `_rigid_adjoint_cache.qpos` 가
+   `(substeps_local + 1, n_qs, n_envs)` shape 일 때, 각 slot 이 어느
+   substep 의 시작/끝 state 를 담는지 명확히 trace.
+
+---
+
+## Common pitfalls (우리가 빠진 함정 모음)
+
+### P1. "Silent drop" 진단의 false positive
+"Manual chain 식과 kernel 결과가 다르다" 만 보고 autodiff 의 silent drop 으로
+판단하면 위험. 실제로는 *서로 다른 primal* 로 계산한 같은 chain 일 수 있음.
+
+대응: Step 4 에서 manual chain 은 *반드시* kernel 의 실제 primal 을
+사용해서 계산.
+
+### P2. Manual backward 검증 누락
+Manual kernel 구현해놓고 검증 없이 production 적용. 만약 manual 자체에
+버그가 있으면 Step 6 의 정량 분기 (동일 wrong vs 다른 wrong) 가 무의미해짐.
+
+대응: numpy verification 필수.
+
+### P3. N=1 vs N≥2 비대칭 무시
+N≥2 가 catastrophic 이면 single-step 로직에 집중하기 쉬움. 그러나 N=1 이
+정확하면 single-step 무죄. 시간 낭비 방지.
+
+대응: Step 3 분기를 가장 먼저 수행.
+
+### P4. FD precision floor 와 real bug 혼동
+FD 의 `(lp - lm) / (2*eps)` 가 FP64 precision 으로 inflate 되어 rel err
+크게 나오면 fake bug 처럼 보임.
+
+대응: Richardson FD 로 eps 변화 시 fd 값 수렴 확인. 여러 eps 에서
+consistent 한 값이 true gradient.
+
+### P5. Mask atol 빼먹기
+`|fd| < atol` 인 entry 의 rel err 은 의미 없음. 마스킹 안 하면 dominant
+가 되어 진짜 버그 가림.
+
+대응: `mask = |fd| > 1e-10` 적용한 max rel 사용.
+
+### P6. Dead-end `.grad` field 를 의심 대상으로 삼기
+중간 stage 의 `.grad` dump 에서 `cinr_*`, `cdof_*`, `cd_*`, `cfrc_*` 같은
+fields 에 residual 값이 보이면 leak 처럼 보임. 그러나 이런 field 들은 대부분
+*forward 의 `Y = ... + X` 패턴의 X 쪽* 으로 downstream consumer 가 없음
+(또는 매우 약함). 따라서 이런 `.grad` 잔여값이 ctrl_force.grad chain 에
+실질적으로 영향을 줄 가능성은 낮음.
+
+**대응**: 이런 field 들의 zeroing 을 시도해도 ctrl_force.grad 가 변하지
+않으면 dead-end 확정. 디버깅 우선순위에서 후순위로. 진짜 leak 은 보통
+`vel.grad`, `qpos.grad`, `acc.grad`, `force.grad`, `mass_mat.grad` 처럼
+forward chain 의 **load-bearing** field 에 있음.
+
+**과거 경험**: 다양한 link-state `.grad` 잔여값을 zeroing 시도했지만 J1/J4
+multistep 결과 변화 없었음 (`notes/diag_j1_n2_substep_leak.txt` 참고).
+
+### P7. `substep_pre_coupling_grad` 의 함수 순서 변경 금지
+이 함수 안의 kernel 호출 순서는 *state semantics* 가 미묘하게 얽혀 있음.
+순서를 바꾸면 forward primal 의 timestamp 가 어긋나서 silent wrong gradient
+발생.
+
+특히 주의할 페어:
+- `kernel_copy_next_to_curr_no_check` ↔ UCS.grad chain — `qpos` 가 어느
+  시점 값인지에 따라 UCS Jacobian 결과 달라짐
+- `kernel_begin_backward_substep` ↔ manual/auto BW kernel — swap 과
+  state restore 가 한 번에 일어남
+- forward replay 의 `self.substep(f)` 호출 시점 — adjoint cache 가
+  여기서 다시 save 되므로 위치 바꾸면 cache content 달라짐
+
+**대응**:
+1. 순서를 바꿔야 한다고 생각되면, **반드시** 변경 전후로 J1~J5 전체 sweep
+   돌려서 regression 확인.
+2. 새 kernel 을 *추가* 할 때는 기존 순서를 *변경하지 않고* 적절한 위치에
+   삽입.
+3. 만약 정말 바꿔야 한다면, 각 kernel 이 의존하는 forward primal 의
+   timestamp 를 문서화하고 변경 후에도 일관되는지 검증.
+
+---
+
+## Reusable diagnostic infrastructure
+
+| 파일 (위치) | 용도 |
+|---|---|
+| `notes/diag_all_topo_relerror_sweep.py` | Topology × N sweep, 다중 seed |
+| `notes/diag_multistep_worst_case.py` | MJCF templates (J1~J5) |
+| `notes/diag_j4_n2_perdof.py` | Per-DOF rel err breakdown 패턴 |
+| `notes/diag_manual_bw_verify.py` | Manual backward 의 수식 검증 (numpy) |
+| `/tmp/fd_richardson.py` (recreate) | Richardson FD eps 수렴 분석 |
+| `/tmp/numpy_verify.py` (recreate) | kernel 실제 primal + numpy chain |
+| `/tmp/check_cache.py` (recreate) | adjoint cache content inspection |
+| `_debug_grad_dump` (`rigid_solver.py:1288`) | Stage 별 .grad max/norm + verbose per-element |
+
+**Pattern: monkey-patch substep_pre_coupling_grad**
+
+```python
+orig = rs.RigidSolver.substep_pre_coupling_grad
+
+def patched(self, f):
+    pre_state = capture(self)
+    orig(self, f)
+    post_state = capture(self)
+    log.append((f, pre_state, post_state))
+
+rs.RigidSolver.substep_pre_coupling_grad = patched
+```
+
+**Pattern: monkey-patch specific kernel**
+
+```python
+import rigid_solver as rs
+orig_kernel = rs.kernel_xxx
+captured = []
+def wrapped(*args, **kwargs):
+    captured.append(capture(args[0]))  # args[0] is usually self/state
+    orig_kernel(*args, **kwargs)
+rs.kernel_xxx = wrapped
+```
+
+---
+
+## Reference: past incidents
+
+| 날짜 | 증상 | Root cause | Fix |
+|---|---|---|---|
+| 2026-04 | J4 N=1 silent drop on free quat | `func_solve_mass_entity` 의 cross-iter same-buffer reads (Quadrants AD bug) | Manual `kernel_manual_compute_qacc_bw` via IFT |
+| 2026-05-11 | J1~J3 multistep grad leak | Kernel-side `.grad = 0.0` write silently dropped | Python-side `qd_zero_grad` 사용 |
+| 2026-05-12 | J4/J5 multistep workaround | Quadrants AD chain 더 깊은 곳 | Manual backward (임시) |
+| 2026-05-13 | J4 N≥2 catastrophic (이 문서의 트리거) | `save_ckpt` view aliasing | `qd_to_numpy(..., copy=True)` (3줄) |
+
+---
+
+## TL;DR (cheat sheet)
+
+```
+Detected: J? N=? max rel = ?
+├── N=1 정확? 
+│   ├── Yes → Step 7 (primal 의심, view aliasing 의심)
+│   └── No  → Step 4 (chain dump + manual rule)
+├── Manual chain (kernel 의 실제 primal 으로!) = kernel 출력?
+│   ├── Yes → Step 7 (primal 의심)
+│   └── No  → autodiff issue 또는 chain bug 의심
+├── Autodiff bug 의심 시:
+│   ├── 간단한 fix 가능? → fix
+│   ├── Manual backward 만들면 비용 효율적? (Case 2) → manual
+│   └── 그 외 → minimal repro + Quadrants 팀 보고 + 임시 manual
+└── Manual backward 검증 → numpy verification (max diff < 1e-15)
+    └── Production 적용 후 결과:
+        ├── baseline 과 동일 wrong → primal 문제 (Step 7)
+        └── 다른 wrong → manual 수식 bug 또는 더 상류 chain bug
+```
