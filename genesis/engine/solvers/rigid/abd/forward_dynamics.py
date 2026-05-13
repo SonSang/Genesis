@@ -119,7 +119,6 @@ def kernel_compute_mass_matrix(
             dofs_info=dofs_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=False,
         )
 
 
@@ -158,7 +157,6 @@ def func_forward_dynamics(
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_torque_and_passive_force(
         entities_state=entities_state,
@@ -440,220 +438,135 @@ def func_factor_mass(
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    is_backward: qd.template(),
 ):
-    BW = qd.static(is_backward)
+    n_entities = entities_info.n_links.shape[0]
+    _B = dofs_state.ctrl_mode.shape[1]
 
-    if qd.static(not BW):
-        n_entities = entities_info.n_links.shape[0]
-        _B = dofs_state.ctrl_mode.shape[1]
-
-        if qd.static(
-            not static_rigid_sim_config.enable_tiled_cholesky_mass_matrix or static_rigid_sim_config.backend == gs.cpu
-        ):
-            qd.loop_config(name="factor_mass", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_e, i_b in qd.ndrange(n_entities, _B):
-                if rigid_global_info.mass_mat_mask[i_e, i_b]:
-                    entity_dof_start = entities_info.dof_start[i_e]
-                    entity_dof_end = entities_info.dof_end[i_e]
-                    n_dofs = entities_info.n_dofs[i_e]
-
-                    for i_d in range(entity_dof_start, entity_dof_end):
-                        for j_d in range(entity_dof_start, i_d + 1):
-                            rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
-
-                        if qd.static(implicit_damping):
-                            I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
-                                rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                                + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
-                            )
-                            if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                                    rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
-                                        rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                                        - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
-                                    )
-
-                    for i_d_ in range(n_dofs):
-                        i_d = entity_dof_end - i_d_ - 1
-                        D_inv = 1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                        rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
-
-                        for j_d_ in range(i_d - entity_dof_start):
-                            j_d = i_d - j_d_ - 1
-                            a = rigid_global_info.mass_mat_L[i_d, j_d, i_b] * D_inv
-                            for k_d in range(entity_dof_start, j_d + 1):
-                                rigid_global_info.mass_mat_L[j_d, k_d, i_b] -= (
-                                    a * rigid_global_info.mass_mat_L[i_d, k_d, i_b]
-                                )
-                            rigid_global_info.mass_mat_L[i_d, j_d, i_b] = a
-
-                        # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
-                        rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
-        else:
-            BLOCK_DIM = qd.static(32)
-            MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
-            WARP_SIZE = qd.static(32)
-
-            qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
-            for i in range(n_entities * _B * BLOCK_DIM):
-                tid = i % BLOCK_DIM
-                i_e = (i // BLOCK_DIM) % n_entities
-                i_b = i // (BLOCK_DIM * n_entities)
-                if i_b >= _B:
-                    continue
-
-                if rigid_global_info.mass_mat_mask[i_e, i_b]:
-                    entity_dof_start = entities_info.dof_start[i_e]
-                    entity_dof_end = entities_info.dof_end[i_e]
-                    n_dofs = entities_info.n_dofs[i_e]
-                    n_lower_tri = n_dofs * (n_dofs + 1) // 2
-
-                    mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, MAX_DOFS_PER_ENTITY + 1), gs.qd_float)
-
-                    i_pair = tid
-                    while i_pair < n_lower_tri:
-                        i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
-                        j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
-                        i_d = entity_dof_start + i_d_
-                        j_d = entity_dof_start + j_d_
-                        mass_mat[i_d_, j_d_] = rigid_global_info.mass_mat[i_d, j_d, i_b]
-                        i_pair = i_pair + BLOCK_DIM
-                    qd.simt.block.sync()
-
-                    if qd.static(implicit_damping):
-                        i_d_ = tid
-                        while i_d_ < n_dofs:
-                            i_d = entity_dof_start + i_d_
-                            I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                            mass_mat[i_d_, i_d_] = (
-                                mass_mat[i_d_, i_d_] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
-                            )
-                            if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                                    mass_mat[i_d_, i_d_] = (
-                                        mass_mat[i_d_, i_d_]
-                                        - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
-                                    )
-                            i_d_ = i_d_ + BLOCK_DIM
-                        qd.simt.block.sync()
-
-                    for j in range(n_dofs):
-                        i_d_ = n_dofs - j - 1
-                        i_d = entity_dof_end - j - 1
-
-                        D_inv = 1.0 / mass_mat[i_d_, i_d_]
-                        if tid == 0:
-                            rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
-                            # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
-                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
-
-                        j_d_ = i_d_ - 1 - tid
-                        while j_d_ >= 0:
-                            a = mass_mat[i_d_, j_d_] * D_inv
-                            for k_d in range(j_d_ + 1):
-                                mass_mat[j_d_, k_d] = mass_mat[j_d_, k_d] - a * mass_mat[i_d_, k_d]
-                            mass_mat[i_d_, j_d_] = a
-                            j_d_ = j_d_ - BLOCK_DIM
-                        if qd.static(static_rigid_sim_config.backend == gs.cuda):
-                            if i_d_ <= WARP_SIZE:
-                                qd.simt.warp.sync(qd.u32(0xFFFFFFFF))
-                            else:
-                                qd.simt.block.sync()
-                        else:
-                            qd.simt.block.sync()
-
-                    i_pair = tid
-                    n_strict_lower_tri = n_dofs * (n_dofs - 1) // 2
-                    while i_pair < n_strict_lower_tri:
-                        i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) + 1) // 2, qd.i32)
-                        j_d_ = i_pair - i_d_ * (i_d_ - 1) // 2
-                        i_d = entity_dof_start + i_d_
-                        j_d = entity_dof_start + j_d_
-                        rigid_global_info.mass_mat_L[i_d, j_d, i_b] = mass_mat[i_d_, j_d_]
-                        i_pair = i_pair + BLOCK_DIM
-    else:
-        # Cholesky decomposition that has safe access pattern and robust handling of divide by zero for AD. Even though
-        # it is logically equivalent to the above block, it shows slightly numerical difference in the result, and thus
-        # it fails for a unit test ("test_urdf_rope"), while passing all the others. TODO: Investigate if we can fix this
-        # and only use this block.
-
-        # Assume this is the outermost loop
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
+    if qd.static(
+        not static_rigid_sim_config.enable_tiled_cholesky_mass_matrix or static_rigid_sim_config.backend == gs.cpu
+    ):
+        qd.loop_config(name="factor_mass", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_e, i_b in qd.ndrange(n_entities, _B):
             if rigid_global_info.mass_mat_mask[i_e, i_b]:
-                EPS = rigid_global_info.EPS[None]
-
                 entity_dof_start = entities_info.dof_start[i_e]
                 entity_dof_end = entities_info.dof_end[i_e]
                 n_dofs = entities_info.n_dofs[i_e]
 
-                for i_d0 in range(n_dofs):
-                    i_d = entity_dof_start + i_d0
-                    i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
+                for i_d in range(entity_dof_start, entity_dof_end):
                     for j_d in range(entity_dof_start, i_d + 1):
-                        j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
-                        rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
-                        rigid_global_info.mass_mat_L_bw[0, j_pr, i_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
+                        rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
 
                     if qd.static(implicit_damping):
                         I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                        qd.atomic_add(
-                            rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b],
-                            (dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]),
+                        rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                            rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                            + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                         )
                         if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                             if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                                qd.atomic_add(
-                                    rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b],
-                                    -dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None],
+                                rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                    rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                    - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
                                 )
 
-                # Cholesky-Banachiewicz algorithm (in the perturbed indices), access pattern is safe for autodiff
-                # https://en.wikipedia.org/wiki/Cholesky_decomposition
-                for p_i0 in range(n_dofs):
-                    for p_j0 in range(p_i0 + 1):
-                        # j_pr <= i_pr
-                        i_pr = entity_dof_start + p_i0
-                        j_pr = entity_dof_start + p_j0
+                for i_d_ in range(n_dofs):
+                    i_d = entity_dof_end - i_d_ - 1
+                    D_inv = 1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                    rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
 
-                        sum = gs.qd_float(0.0)
-                        for p_k0 in range(p_j0):
-                            # k_pr < j_pr
-                            k_pr = entity_dof_start + p_k0
-                            sum = sum + (
-                                rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
-                                * rigid_global_info.mass_mat_L_bw[1, j_pr, k_pr, i_b]
+                    for j_d_ in range(i_d - entity_dof_start):
+                        j_d = i_d - j_d_ - 1
+                        a = rigid_global_info.mass_mat_L[i_d, j_d, i_b] * D_inv
+                        for k_d in range(entity_dof_start, j_d + 1):
+                            rigid_global_info.mass_mat_L[j_d, k_d, i_b] -= (
+                                a * rigid_global_info.mass_mat_L[i_d, k_d, i_b]
                             )
+                        rigid_global_info.mass_mat_L[i_d, j_d, i_b] = a
 
-                        a = rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] - sum
-                        b = qd.math.clamp(
-                            rigid_global_info.mass_mat_L_bw[1, j_pr, j_pr, i_b],
-                            EPS,
-                            qd.math.inf,
+                    # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
+                    rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
+    else:
+        BLOCK_DIM = qd.static(32)
+        MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
+        WARP_SIZE = qd.static(32)
+
+        qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
+        for i in range(n_entities * _B * BLOCK_DIM):
+            tid = i % BLOCK_DIM
+            i_e = (i // BLOCK_DIM) % n_entities
+            i_b = i // (BLOCK_DIM * n_entities)
+            if i_b >= _B:
+                continue
+
+            if rigid_global_info.mass_mat_mask[i_e, i_b]:
+                entity_dof_start = entities_info.dof_start[i_e]
+                entity_dof_end = entities_info.dof_end[i_e]
+                n_dofs = entities_info.n_dofs[i_e]
+                n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+                mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, MAX_DOFS_PER_ENTITY + 1), gs.qd_float)
+
+                i_pair = tid
+                while i_pair < n_lower_tri:
+                    i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
+                    j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
+                    i_d = entity_dof_start + i_d_
+                    j_d = entity_dof_start + j_d_
+                    mass_mat[i_d_, j_d_] = rigid_global_info.mass_mat[i_d, j_d, i_b]
+                    i_pair = i_pair + BLOCK_DIM
+                qd.simt.block.sync()
+
+                if qd.static(implicit_damping):
+                    i_d_ = tid
+                    while i_d_ < n_dofs:
+                        i_d = entity_dof_start + i_d_
+                        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        mass_mat[i_d_, i_d_] = (
+                            mass_mat[i_d_, i_d_] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                         )
-                        if p_i0 == p_j0:
-                            rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = qd.sqrt(
-                                qd.math.clamp(a, EPS, qd.math.inf)
-                            )
+                        if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
+                            if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
+                                mass_mat[i_d_, i_d_] = (
+                                    mass_mat[i_d_, i_d_]
+                                    - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
+                                )
+                        i_d_ = i_d_ + BLOCK_DIM
+                    qd.simt.block.sync()
+
+                for j in range(n_dofs):
+                    i_d_ = n_dofs - j - 1
+                    i_d = entity_dof_end - j - 1
+
+                    D_inv = 1.0 / mass_mat[i_d_, i_d_]
+                    if tid == 0:
+                        rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
+                        # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
+                        rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
+
+                    j_d_ = i_d_ - 1 - tid
+                    while j_d_ >= 0:
+                        a = mass_mat[i_d_, j_d_] * D_inv
+                        for k_d in range(j_d_ + 1):
+                            mass_mat[j_d_, k_d] = mass_mat[j_d_, k_d] - a * mass_mat[i_d_, k_d]
+                        mass_mat[i_d_, j_d_] = a
+                        j_d_ = j_d_ - BLOCK_DIM
+                    if qd.static(static_rigid_sim_config.backend == gs.cuda):
+                        if i_d_ <= WARP_SIZE:
+                            qd.simt.warp.sync(qd.u32(0xFFFFFFFF))
                         else:
-                            rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = a / b
+                            qd.simt.block.sync()
+                    else:
+                        qd.simt.block.sync()
 
-                for i_d0 in range(n_dofs):
-                    for i_d1 in range(i_d0 + 1):
-                        i_d = entity_dof_start + i_d0
-                        j_d = entity_dof_start + i_d1
-                        i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
-                        j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
-
-                        a = rigid_global_info.mass_mat_L_bw[1, i_pr, i_pr, i_b]
-                        rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat_L_bw[
-                            1, j_pr, i_pr, i_b
-                        ] / qd.math.clamp(a, EPS, qd.math.inf)
-
-                        if i_d == j_d:
-                            rigid_global_info.mass_mat_D_inv[i_d, i_b] = 1.0 / (qd.math.clamp(a**2, EPS, qd.math.inf))
+                i_pair = tid
+                n_strict_lower_tri = n_dofs * (n_dofs - 1) // 2
+                while i_pair < n_strict_lower_tri:
+                    i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) + 1) // 2, qd.i32)
+                    j_d_ = i_pair - i_d_ * (i_d_ - 1) // 2
+                    i_d = entity_dof_start + i_d_
+                    j_d = entity_dof_start + j_d_
+                    rigid_global_info.mass_mat_L[i_d, j_d, i_b] = mass_mat[i_d_, j_d_]
+                    i_pair = i_pair + BLOCK_DIM
 
 
 @qd.func
@@ -662,60 +575,36 @@ def func_solve_mass_entity(
     i_b: qd.int32,
     vec: qd.Tensor,
     out: qd.Tensor,
-    out_bw: qd.template(),
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    is_backward: qd.template(),
 ):
-    BW = qd.static(is_backward)
-
     if rigid_global_info.mass_mat_mask[i_e, i_b]:
         entity_dof_start = entities_info.dof_start[i_e]
         entity_dof_end = entities_info.dof_end[i_e]
         n_dofs = entities_info.n_dofs[i_e]
 
-        # Step 1: Solve w st. L^T @ w = y
-        #
-        # FW mode: write w into `out`.
-        # BW mode: write w into `out_bw[0]` (Step 2 BW reads from there). This is
-        # plain forward execution (no AD tape on this call path — its `.grad` is
-        # never invoked; the reverse for the whole `func_compute_qacc` is handled
-        # by `kernel_manual_compute_qacc_bw`). The cross-iter same-buffer read
-        # of `out_bw[0, j_d]` was historically a problem because Quadrants AD
-        # silently drops the adjoint across outer iterations, but since we no
-        # longer differentiate this kernel, forward execution is correct.
-        if qd.static(BW):
-            for i_d_ in range(n_dofs):
-                i_d = entity_dof_end - i_d_ - 1
-                curr_out = vec[i_d, i_b]
-                for j_d in range(i_d + 1, entity_dof_end):
-                    curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-                out_bw[0, i_d, i_b] = curr_out
-        else:
-            for i_d_ in range(n_dofs):
-                i_d = entity_dof_end - i_d_ - 1
-                curr_out = vec[i_d, i_b]
-                for j_d in range(i_d + 1, entity_dof_end):
-                    curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
-                out[i_d, i_b] = curr_out
+        # Step 1: Solve w st. L^T @ w = y. Cross-iter same-buffer read of
+        # `out[j_d]` (j > i) is fine for forward execution — the entries it
+        # reads were finalized in earlier (larger-i_d) iterations. The
+        # reverse of this kernel is never auto-generated; the backward is
+        # handled by `kernel_manual_compute_qacc_bw` via IFT.
+        for i_d_ in range(n_dofs):
+            i_d = entity_dof_end - i_d_ - 1
+            curr_out = vec[i_d, i_b]
+            for j_d in range(i_d + 1, entity_dof_end):
+                curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
+            out[i_d, i_b] = curr_out
 
         # Step 2: z = D^{-1} w
         for i_d in range(entity_dof_start, entity_dof_end):
-            if qd.static(BW):
-                out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
-            else:
-                out[i_d, i_b] = out[i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+            out[i_d, i_b] = out[i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
 
         # Step 3: Solve x st. L @ x = z
         for i_d in range(entity_dof_start, entity_dof_end):
             curr_out = out[i_d, i_b]
-            if qd.static(BW):
-                curr_out = out_bw[1, i_d, i_b]
-
             for j_d in range(entity_dof_start, i_d):
                 curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
-
             out[i_d, i_b] = curr_out
 
 
@@ -724,14 +613,10 @@ def func_solve_mass_batch(
     i_b: qd.int32,
     vec: qd.Tensor,
     out: qd.Tensor,
-    out_bw: qd.template(),
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    is_backward: qd.template(),
 ):
-    BW = qd.static(is_backward)
-
     # This loop is considered an inner loop
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_0 in (
@@ -740,270 +625,21 @@ def func_solve_mass_batch(
         else range(entities_info.n_links.shape[0])
     ):
         i_e = rigid_global_info.awake_entities[i_0, i_b] if qd.static(static_rigid_sim_config.use_hibernation) else i_0
-        func_solve_mass_entity(
-            i_e, i_b, vec, out, out_bw, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
-        )
+        func_solve_mass_entity(i_e, i_b, vec, out, entities_info, rigid_global_info, static_rigid_sim_config)
 
 
 @qd.func
 def func_solve_mass(
     vec: qd.Tensor,
     out: qd.Tensor,
-    out_bw: qd.template(),  # None in forward mode, real tensor in backward mode
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    is_backward: qd.template(),
 ):
     # This loop must be the outermost loop to be differentiable
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], out.shape[1]):
-        func_solve_mass_entity(
-            i_e, i_b, vec, out, out_bw, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
-        )
-
-
-# ----------------------------------------------------------------------
-# Phase B: per-DOF backward-mode Step 1 of the LDLT solve.
-#
-# The original Step 1 in `func_solve_mass_entity` (BW branch) has the form
-#     for i_d_ in range(n_dofs):
-#         i_d = entity_dof_end - i_d_ - 1
-#         out_bw[0, i_d, i_b] = vec[i_d, i_b]
-#         for j_d in range(i_d + 1, entity_dof_end):
-#             out_bw[0, i_d, i_b] -= L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-# i.e. each outer iteration reads `out_bw[0, j_d, i_b]` values that earlier
-# outer iterations wrote — a cross-iteration self-referential dependency that
-# Quadrants AD silently drops on the reverse pass. See
-# `tests/test_quadrants_self_ref_ad.py::test_quadrants_cross_iter_same_buffer_ad`
-# and `notes/quadrants_cross_iter_ad_limitation.md`.
-#
-# The workaround is to split the outer loop into one kernel call per
-# `i_d_offset` *from Python*. The cross-iter dependency becomes a
-# cross-kernel dependency that Quadrants AD does handle correctly. The
-# caller (`RigidSolver.substep_pre_coupling_grad`) is responsible for:
-#   - calling these per-DOF kernels in ascending `i_d_offset` order
-#     *before* `kernel_compute_qacc.grad(..., is_backward=True)` so that
-#     `out_bw[0, :, :]` is populated correctly for Step 2's forward read,
-#   - calling their `.grad()` in *descending* `i_d_offset` order *after*
-#     `kernel_compute_qacc.grad(..., is_backward=True)` so that the seed
-#     `out_bw[0, :, :].grad` produced by Step 2's reverse is propagated
-#     into `vec[i_d, i_b].grad` (= `dofs_state.force.grad`).
-# `func_solve_mass_entity` skips its Step 1 entirely in BW mode.
-@qd.func
-def func_solve_mass_entity_step1_one_dof_bw(
-    i_e: qd.int32,
-    i_b: qd.int32,
-    i_d_offset: qd.int32,
-    vec: qd.Tensor,
-    out_bw: qd.template(),
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    if rigid_global_info.mass_mat_mask[i_e, i_b]:
-        entity_dof_end = entities_info.dof_end[i_e]
-        n_dofs = entities_info.n_dofs[i_e]
-
-        if i_d_offset < n_dofs:
-            i_d = entity_dof_end - i_d_offset - 1
-            curr = vec[i_d, i_b]
-            for j_d in range(i_d + 1, entity_dof_end):
-                curr = curr - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-            out_bw[0, i_d, i_b] = curr
-
-
-@qd.kernel
-def kernel_solve_mass_step1_one_dof_bw(
-    i_d_offset: qd.int32,
-    dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    # Top-level ndrange is required by Quadrants AD (mixing for-loops and
-    # straight-line statements at the kernel top level is rejected).
-    # NB: use `dofs_state.force.shape[1]` (always (n_dofs_, B)) for the batch
-    # dimension — `acc_smooth_bw` has shape `(2, n_dofs_, B)` only in grad mode
-    # and collapses to `()` otherwise (see `maybe_shape`).
-    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.force.shape[1]):
-        func_solve_mass_entity_step1_one_dof_bw(
-            i_e=i_e,
-            i_b=i_b,
-            i_d_offset=i_d_offset,
-            vec=dofs_state.force,
-            out_bw=dofs_state.acc_smooth_bw,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-
-# ----------------------------------------------------------------------
-# Manual Step 2 reverse for the LDLT solve.
-#
-# `kernel_compute_qacc.grad` (Quadrants-auto-generated) propagates
-# `acc.grad → acc_smooth.grad → acc_smooth_bw[1].grad` through Step 3's
-# reverse, but silently drops the trivial Step 2 reverse contribution
-# `grad[acc_smooth_bw[0, i_d]] += D_inv[i_d] * grad[acc_smooth_bw[1, i_d]]`.
-# Confirmed via instrumentation that `acc_smooth_bw.grad[0] = 0` after
-# `kernel_compute_qacc.grad` even though `acc_smooth_bw.grad[1]` is non-zero.
-# The failure is independent of whether Step 1 BW is present or skipped, and
-# the isolated reverse-mode of the same `out[1] = out[0] * c` pattern
-# *does* work (see `tests/test_quadrants_self_ref_ad.py::
-# test_quadrants_two_slot_self_ref_ad`), so the root cause is specific to
-# `kernel_compute_qacc.grad`'s tape construction — possibly an interaction
-# with the nested `@qd.func` boundaries (`func_compute_qacc` →
-# `func_solve_mass` → `func_solve_mass_entity`), the dynamic
-# `mass_mat_mask` guard, or the two top-level ndranges in
-# `func_compute_qacc`. Workaround: run Step 2 reverse manually as a
-# separate kernel after `kernel_compute_qacc.grad`.
-@qd.kernel(fastcache=True)
-def kernel_factor_mass_stage_a_bw(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Stage A of the BW-path factor_mass: copy mass_mat (symmetric) into
-    `mass_mat_L_bw[0]` using perturbed indices.
-
-    Forward:
-      mass_mat_L_bw[0, i_pr, j_pr] = mass_mat[i_d, j_d]
-      mass_mat_L_bw[0, j_pr, i_pr] = mass_mat[i_d, j_d]  (symmetric)
-    where i_pr = (start + end - 1) - i_d, j_pr similarly.
-
-    Reverse (Quadrants auto-AD):
-      mass_mat[i_d, j_d].grad += mass_mat_L_bw[0, i_pr, j_pr].grad
-                              +  mass_mat_L_bw[0, j_pr, i_pr].grad
-
-    Separating into a standalone kernel makes Quadrants AD reverse this
-    chain in isolation, bypassing the silent drop inside the bigger
-    `kernel_forward_dynamics_without_qacc.grad`.
-    """
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
-        if rigid_global_info.mass_mat_mask[i_e, i_b]:
-            entity_dof_start = entities_info.dof_start[i_e]
-            entity_dof_end = entities_info.dof_end[i_e]
-            for i_d0 in range(entities_info.n_dofs[i_e]):
-                i_d = entity_dof_start + i_d0
-                i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
-                for j_d in range(entity_dof_start, i_d + 1):
-                    j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
-                    rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
-                    rigid_global_info.mass_mat_L_bw[0, j_pr, i_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
-
-
-@qd.kernel(fastcache=True)
-def kernel_factor_mass_stage_b_pair_bw(
-    p_i0: qd.int32,
-    p_j0: qd.int32,
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Stage B of the BW-path factor_mass: ONE pair (p_i0, p_j0) of the
-    Cholesky-Banachiewicz factorization (inner loop on p_k0 is fine — it
-    only reads from earlier pairs which are now in their own kernel calls).
-
-    Phase B-style per-pair split: original `for p_i0: for p_j0: ...`
-    becomes Python-side sequential kernel calls. Cross-iter dependency
-    `mass_mat_L_bw[1, ...]` between outer (p_i0, p_j0) pairs becomes
-    cross-kernel dependency that Quadrants AD reverses correctly per-pair.
-
-    Caller must invoke this in ascending (p_i0, p_j0) order for forward,
-    descending for `.grad`.
-    """
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
-        if rigid_global_info.mass_mat_mask[i_e, i_b]:
-            if p_i0 < entities_info.n_dofs[i_e] and p_j0 <= p_i0:
-                EPS = rigid_global_info.EPS[None]
-                entity_dof_start = entities_info.dof_start[i_e]
-                i_pr = entity_dof_start + p_i0
-                j_pr = entity_dof_start + p_j0
-
-                sum = gs.qd_float(0.0)
-                # Static upper bound for adstack sizing; conditional skip
-                # past `p_j0` keeps the loop body inert for higher k.
-                for p_k0 in range(qd.static(static_rigid_sim_config.max_n_dofs_per_entity)):
-                    if p_k0 < p_j0:
-                        k_pr = entity_dof_start + p_k0
-                        sum = sum + (
-                            rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
-                            * rigid_global_info.mass_mat_L_bw[1, j_pr, k_pr, i_b]
-                        )
-
-                a = rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] - sum
-                b = qd.math.clamp(
-                    rigid_global_info.mass_mat_L_bw[1, j_pr, j_pr, i_b],
-                    EPS,
-                    qd.math.inf,
-                )
-                if p_i0 == p_j0:
-                    rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = qd.sqrt(qd.math.clamp(a, EPS, qd.math.inf))
-                else:
-                    rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = a / b
-
-
-@qd.kernel(fastcache=True)
-def kernel_factor_mass_stage_c_bw(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Stage C of the BW-path factor_mass: extract mass_mat_L and
-    mass_mat_D_inv from mass_mat_L_bw[1].
-
-    Forward:
-      a = mass_mat_L_bw[1, i_pr, i_pr]
-      mass_mat_L[i_d, j_d] = mass_mat_L_bw[1, j_pr, i_pr] / clamp(a, EPS, inf)
-      if i_d == j_d:
-          mass_mat_D_inv[i_d] = 1.0 / clamp(a**2, EPS, inf)
-
-    Reverse handled by Quadrants AD on this isolated kernel.
-    """
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
-        if rigid_global_info.mass_mat_mask[i_e, i_b]:
-            EPS = rigid_global_info.EPS[None]
-            entity_dof_start = entities_info.dof_start[i_e]
-            entity_dof_end = entities_info.dof_end[i_e]
-            for i_d0 in range(entities_info.n_dofs[i_e]):
-                for i_d1 in range(i_d0 + 1):
-                    i_d = entity_dof_start + i_d0
-                    j_d = entity_dof_start + i_d1
-                    i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
-                    j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
-
-                    a = rigid_global_info.mass_mat_L_bw[1, i_pr, i_pr, i_b]
-                    rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat_L_bw[
-                        1, j_pr, i_pr, i_b
-                    ] / qd.math.clamp(a, EPS, qd.math.inf)
-
-                    if i_d == j_d:
-                        rigid_global_info.mass_mat_D_inv[i_d, i_b] = 1.0 / qd.math.clamp(a * a, EPS, qd.math.inf)
-
-
-@qd.kernel
-def kernel_solve_mass_step2_reverse_bw(
-    dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.force.shape[1]):
-        if rigid_global_info.mass_mat_mask[i_e, i_b]:
-            entity_dof_start = entities_info.dof_start[i_e]
-            entity_dof_end = entities_info.dof_end[i_e]
-            for i_d in range(entity_dof_start, entity_dof_end):
-                dofs_state.acc_smooth_bw.grad[0, i_d, i_b] = (
-                    dofs_state.acc_smooth_bw.grad[0, i_d, i_b]
-                    + rigid_global_info.mass_mat_D_inv[i_d, i_b] * dofs_state.acc_smooth_bw.grad[1, i_d, i_b]
-                )
+        func_solve_mass_entity(i_e, i_b, vec, out, entities_info, rigid_global_info, static_rigid_sim_config)
 
 
 @qd.kernel(fastcache=True)
@@ -1028,14 +664,18 @@ def kernel_manual_compute_qacc_bw(
     Reverse chain (manual, by IFT and symmetry of M = L^T D L):
         acc_smooth.grad += acc.grad   (reverse of identity copy)
         acc.grad         = 0          (forward overwrites acc)
-        force.grad      += M^{-1} . acc_smooth.grad
+        force_contrib    = M^{-1} . acc_smooth.grad
+        force.grad      += force_contrib
                                        (M is symmetric, so M^{-T} = M^{-1})
-        (`mass_mat.grad` would be `-force.grad (x) acc_smooth` by IFT but
-         is a dead-end downstream: `kernel_compute_mass_matrix.grad` is
-         not invoked, so we skip seeding it. The Phase B factor_mass
-         reverses still run on `mass_mat_L.grad / mass_mat_D_inv.grad`
-         which are now zero, producing zero contribution — kept for
-         consistency, not regressed.)
+        # Symmetric lower-tri storage of mass_mat: forward only reads
+        # mass_mat[i, j] for i >= j (lower-tri). Each off-diagonal parameter
+        # appears once in the forward, but the implicit symmetry means the
+        # IFT contribution to the lower-tri parameter combines both `(i, j)`
+        # and `(j, i)` chain terms (the upper mirror is logically present
+        # via symmetry of the matrix being inverted).
+        mass_mat[i, i].grad += -force_contrib[i] * acc_smooth[i]
+        mass_mat[i, j].grad += -(force_contrib[i] * acc_smooth[j]
+                                + force_contrib[j] * acc_smooth[i])    (i > j)
 
     LDLT structure (Genesis transposed convention M = L^T D L):
         Step 1: solve L^T . u = acc_smooth.grad       (descending i_d)
@@ -1091,6 +731,28 @@ def kernel_manual_compute_qacc_bw(
                 dofs_state.force.grad[i_d, i_b] = (
                     dofs_state.force.grad[i_d, i_b] + dofs_state.acc_smooth_bw[1, i_d, i_b]
                 )
+
+            # IFT seed for mass_mat.grad. `mass_mat` is stored as lower-tri
+            # (with the upper half implicitly equal by symmetry). For each
+            # lower-tri parameter:
+            #   diagonal (i == j): ∂L/∂M_ii = -force_contrib[i] · acc_smooth[i]
+            #   off-diag (i > j):  ∂L/∂M_ij = -(force_contrib[i] · acc_smooth[j]
+            #                                  + force_contrib[j] · acc_smooth[i])
+            # The off-diagonal sum picks up the chain through both the
+            # (i, j) and (j, i) occurrences of the parameter in the symmetric
+            # matrix.
+            for i_d in range(entity_dof_start, entity_dof_end):
+                fi = dofs_state.acc_smooth_bw[1, i_d, i_b]
+                ai = dofs_state.acc_smooth[i_d, i_b]
+                rigid_global_info.mass_mat.grad[i_d, i_d, i_b] = (
+                    rigid_global_info.mass_mat.grad[i_d, i_d, i_b] - fi * ai
+                )
+                for j_d in range(entity_dof_start, i_d):
+                    fj = dofs_state.acc_smooth_bw[1, j_d, i_b]
+                    aj = dofs_state.acc_smooth[j_d, i_b]
+                    rigid_global_info.mass_mat.grad[i_d, j_d, i_b] = rigid_global_info.mass_mat.grad[i_d, j_d, i_b] - (
+                        fi * aj + fj * ai
+                    )
 
 
 @qd.func
@@ -1548,11 +1210,9 @@ def func_compute_qacc(
     func_solve_mass(
         vec=dofs_state.force,
         out=dofs_state.acc_smooth,
-        out_bw=dofs_state.acc_smooth_bw,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     # Assume this is the outermost loop
@@ -1717,26 +1377,17 @@ def kernel_forward_dynamics_without_qacc(
     contact_island_state: array_class.ContactIslandState,
     is_backward: qd.template(),
 ):
-    func_compute_mass_matrix(
-        implicit_damping=qd.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
-        links_state=links_state,
-        links_info=links_info,
-        dofs_state=dofs_state,
-        dofs_info=dofs_info,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
-    )
-    func_factor_mass(
-        implicit_damping=False,
-        entities_info=entities_info,
-        dofs_state=dofs_state,
-        dofs_info=dofs_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
-    )
+    # `func_compute_mass_matrix` and `func_factor_mass` are intentionally
+    # omitted here so that this kernel's auto-generated `.grad` (invoked
+    # during backward) does not try to differentiate them. Their reverses
+    # are either rejected by Quadrants AD (mixed for-loops + statements in
+    # `func_compute_mass_matrix`) or no longer needed (the LDLT chain is
+    # handled directly by `kernel_manual_compute_qacc_bw` via IFT, seeding
+    # `mass_mat.grad` without going through `mass_mat_L.grad` /
+    # `mass_mat_D_inv.grad`). The forward primals of `mass_mat` /
+    # `mass_mat_L` / `mass_mat_D_inv` are still produced upstream — by
+    # `kernel_step_1 → func_forward_dynamics` during the forward replay
+    # inside `self.substep(f)` — so the .grad call here can rely on them.
     func_torque_and_passive_force(
         entities_state=entities_state,
         entities_info=entities_info,
@@ -1829,16 +1480,13 @@ def func_implicit_damping(
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_solve_mass(
         vec=dofs_state.force,
         out=dofs_state.acc,
-        out_bw=dofs_state.acc_bw,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     # Disable pre-computed factorization mask right away

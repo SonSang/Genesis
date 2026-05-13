@@ -108,7 +108,6 @@ class RigidGlobalInfo:
     geoms_init_AABB: qd.Tensor
     mass_mat: qd.Tensor
     mass_mat_L: qd.Tensor
-    mass_mat_L_bw: qd.Tensor
     mass_mat_D_inv: qd.Tensor
     mass_mat_mask: qd.Tensor
     meaninertia: qd.Tensor
@@ -138,11 +137,6 @@ def get_rigid_global_info(solver, kinematic_only):
             f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
     requires_grad = solver._requires_grad
-    mass_mat_shape_bw = maybe_shape((2, *mass_mat_shape), requires_grad)
-    if math.prod(mass_mat_shape_bw) > np.iinfo(np.int32).max:
-        gs.raise_exception(
-            f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
-        )
 
     # FIXME: Add a better split between kinematic and Genesis
     if kinematic_only:
@@ -163,7 +157,6 @@ def get_rigid_global_info(solver, kinematic_only):
             geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=()),
             mass_mat=V(dtype=gs.qd_float, shape=()),
             mass_mat_L=V(dtype=gs.qd_float, shape=()),
-            mass_mat_L_bw=V(dtype=gs.qd_float, shape=()),
             mass_mat_D_inv=V(dtype=gs.qd_float, shape=()),
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
@@ -198,7 +191,6 @@ def get_rigid_global_info(solver, kinematic_only):
         geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_, 8)),
         mass_mat=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
-        mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
         mass_parent_mask=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver.n_dofs_)),

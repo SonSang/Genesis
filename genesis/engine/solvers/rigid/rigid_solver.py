@@ -116,12 +116,7 @@ from .abd.forward_dynamics import (
     kernel_update_acc,
     kernel_compute_qacc,
     kernel_forward_dynamics_without_qacc,
-    kernel_solve_mass_step1_one_dof_bw,
-    kernel_solve_mass_step2_reverse_bw,
     kernel_manual_compute_qacc_bw,
-    kernel_factor_mass_stage_a_bw,
-    kernel_factor_mass_stage_b_pair_bw,
-    kernel_factor_mass_stage_c_bw,
     update_qacc_from_qvel_delta,
     update_qvel,
 )
@@ -1331,7 +1326,6 @@ class RigidSolver(KinematicSolver):
             ("rigid_global_info.mass_mat", self._rigid_global_info.mass_mat),
             ("rigid_global_info.mass_mat_L", self._rigid_global_info.mass_mat_L),
             ("rigid_global_info.mass_mat_D_inv", self._rigid_global_info.mass_mat_D_inv),
-            ("rigid_global_info.mass_mat_L_bw", self._rigid_global_info.mass_mat_L_bw),
         ]
         verbose_set = {
             "rigid_global_info.qpos",
@@ -1423,42 +1417,6 @@ class RigidSolver(KinematicSolver):
             kernel_zero_acc_smooth_bw(self.dofs_state)
             qd_zero_grad(self.dofs_state.acc_smooth_bw)
         self.substep(f)
-        # Option A: standalone Phase B-style sequential forward of the
-        # mass-matrix construction + BW-path factor_mass. The same
-        # computations are buried inside `kernel_step_1` and
-        # `kernel_forward_dynamics_without_qacc` already, but those in-kernel
-        # forwards' reverses silently drop the chain. Re-running here as
-        # isolated standalone kernels lets Quadrants AD reverse each in
-        # isolation.
-        #
-        # mass_mat construction: cinr/cdof/... → mass_mat (via crb/f_ang/f_vel)
-        # Stage A: mass_mat → mass_mat_L_bw[0]
-        # Stage B: mass_mat_L_bw[0] → mass_mat_L_bw[1] Cholesky (per-pair, ascending)
-        # Stage C: mass_mat_L_bw[1] → mass_mat_L / mass_mat_D_inv
-        if self._requires_grad:
-            kernel_factor_mass_stage_a_bw(
-                entities_info=self.entities_info,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-            _MAX_DOFS = self._max_n_dofs_across_entities
-            for p_i0 in range(_MAX_DOFS):
-                for p_j0 in range(p_i0 + 1):
-                    kernel_factor_mass_stage_b_pair_bw(
-                        p_i0,
-                        p_j0,
-                        entities_info=self.entities_info,
-                        dofs_state=self.dofs_state,
-                        rigid_global_info=self._rigid_global_info,
-                        static_rigid_sim_config=self._static_rigid_sim_config,
-                    )
-            kernel_factor_mass_stage_c_bw(
-                entities_info=self.entities_info,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
         # =================== Backward substep ======================
         # `kernel_prepare_backward_substep` restored qpos/vel to their pre-integrate values
         # so the integrator backward in `kernel_step_2.grad` has a clean starting point. But
@@ -1645,42 +1603,14 @@ class RigidSolver(KinematicSolver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-        # Option A: reverse of the Phase B-style factor_mass sequence we
-        # pushed after `self.substep(f)`. Reverse order:
-        #   Stage C.grad: mass_mat_L.grad / mass_mat_D_inv.grad → mass_mat_L_bw[1].grad
-        #   Stage B.grad (per-pair, DESCENDING order): mass_mat_L_bw[1] → mass_mat_L_bw[0]
-        #   Stage A.grad: mass_mat_L_bw[0].grad → mass_mat.grad
-        kernel_factor_mass_stage_c_bw.grad(
-            entities_info=self.entities_info,
-            dofs_state=self.dofs_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-        _MAX_DOFS = self._max_n_dofs_across_entities
-        for p_i0 in reversed(range(_MAX_DOFS)):
-            for p_j0 in reversed(range(p_i0 + 1)):
-                kernel_factor_mass_stage_b_pair_bw.grad(
-                    p_i0,
-                    p_j0,
-                    entities_info=self.entities_info,
-                    dofs_state=self.dofs_state,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                )
-        kernel_factor_mass_stage_a_bw.grad(
-            entities_info=self.entities_info,
-            dofs_state=self.dofs_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-        # mass_mat.grad is now seeded by Stage A.grad above. The next step
-        # (chain it down to cinr/cdof.grad) would call `kernel_compute_mass_matrix.grad`,
-        # but that kernel's body has mixed for-loops + statements that
-        # Quadrants AD rejects when reversed in isolation
-        # ("reverse_segments@68] Invalid program input for autodiff"). The
-        # mass-matrix construction needs to be split into smaller
-        # isolated-statement kernels (mirroring the Phase B / factor_mass
-        # treatment above) for the chain to flow. Tracked for next round.
+        # `mass_mat.grad` is already seeded directly by
+        # `kernel_manual_compute_qacc_bw` via IFT (-force_contrib (x) acc_smooth).
+        # Downstream `kernel_compute_mass_matrix.grad` is currently not invoked
+        # — its kernel body mixes for-loops with straight-line statements and
+        # Quadrants AD rejects the reverse ("reverse_segments@68 Invalid program
+        # input for autodiff"). Splitting the mass-matrix construction into
+        # isolated-statement kernels (or, preferably, writing a manual backward
+        # mirroring `kernel_manual_compute_qacc_bw`) is tracked as a follow-up.
         self._debug_grad_dump(f"f={f} after compute_qacc.grad")
         kernel_copy_acc(
             f=f,
