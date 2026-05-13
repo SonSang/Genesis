@@ -118,6 +118,7 @@ from .abd.forward_dynamics import (
     kernel_forward_dynamics_without_qacc,
     kernel_solve_mass_step1_one_dof_bw,
     kernel_solve_mass_step2_reverse_bw,
+    kernel_manual_compute_qacc_bw,
     kernel_factor_mass_stage_a_bw,
     kernel_factor_mass_stage_b_pair_bw,
     kernel_factor_mass_stage_c_bw,
@@ -1369,6 +1370,7 @@ class RigidSolver(KinematicSolver):
         # Change to backward mode
         self._is_backward = True
 
+        self._debug_grad_dump(f"f={f} ENTRY (before prepare_backward_substep)")
         # Run forward substep again to restore this step's information, this is needed because we do not store info
         # of every substep.
         kernel_prepare_backward_substep(
@@ -1406,11 +1408,17 @@ class RigidSolver(KinematicSolver):
         # side `qd_zero_grad` goes through `qd_to_torch(grad, copy=False)
         # .zero_()`, an in-place memset on the underlying device buffer.
         #
-        # Multi-link entities (J4/J5) need additional fixes — other dofs_state
-        # / links_state intermediates also carry stale residue at substep end
-        # (cdof_*, cinr_*, cd_*, cfrc_*), but naively zeroing them ALSO drops
-        # silently-lost-but-legitimate chain rule contributions, regressing
-        # J1's free-body rotation DOFs. Tracked as a separate diagnostic.
+        # Known issue: multi-link entities (J4/J5) and J1 multistep also carry
+        # stale residue on cdof_*, cinr_*, cd_*, cfrc_* `.grad` fields at the
+        # start of substep t < N-1's backward (see
+        # `notes/diag_j1_n2_substep_leak.txt` and
+        # `notes/diag_j1_n2_relerror_sweep.txt` — N=2 t=0 shows ~1e-4 rel
+        # error vs FP64-floor at N=1 / t=N-1). Naively zeroing the candidate
+        # fields here did NOT recover J1 multistep precision (likely those
+        # `.grad` values carry partial legitimate chain contributions even
+        # though they "leak" past substep end). Identifying the exact leaking
+        # field set is tracked as a follow-up (separate from the manual LDLT
+        # backward fix that lives below).
         if self._requires_grad:
             kernel_zero_acc_smooth_bw(self.dofs_state)
             qd_zero_grad(self.dofs_state.acc_smooth_bw)
@@ -1451,7 +1459,6 @@ class RigidSolver(KinematicSolver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
-
         # =================== Backward substep ======================
         # `kernel_prepare_backward_substep` restored qpos/vel to their pre-integrate values
         # so the integrator backward in `kernel_step_2.grad` has a clean starting point. But
@@ -1613,73 +1620,31 @@ class RigidSolver(KinematicSolver):
         )
         self._debug_grad_dump(f"f={f} after step_2.grad")
 
-        # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
-        # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).
-        # In [kernel_forward_dynamics], we read [acc] in [func_update_acc] and overwrite it in [kernel_compute_qacc].
-        # As [kenrel_compute_qacc] is called at the end of [kernel_forward_dynamics], we first backpropagate through
-        # [kernel_compute_qacc] and then restore the original [acc] from the adjoint cache. This copy operation
-        # cannot be merged with [kernel_compute_qacc.grad] because .grad function itself is a standalone kernel.
-        # We could possibly merge this small kernel later if (1) .grad function is regarded as a function instead of a
-        # kernel, (2) we add another variable to store the new [acc] from [kernel_compute_qacc] and thus can avoid
-        # the data access violation. However, both of these require major changes.
+        # Manual backward for `func_compute_qacc` (IFT). Replaces the previous
+        # Quadrants-traced `kernel_compute_qacc.grad` + Phase B externals
+        # (per-DOF Step 1 forward replay + reverse, Step 2 manual reverse) which
+        # silently dropped the adjoint chain inside `func_solve_mass_entity` and
+        # — worse — required the BW path of `func_solve_mass_entity` to skip
+        # Step 1 entirely, leaving `acc_smooth = 0` (and hence `acc = 0`,
+        # `vel_next = 0`, `qpos_next = identity`) during this substep's
+        # `self.substep(f)` forward replay. That corrupted forward primal caused
+        # the J4/J5 multistep `control_dofs_force` gradient mismatch (the FK
+        # reverse was running on `qpos = identity`, collapsing every
+        # quaternion-derivative term).
         #
-        # Phase B: The LDLT solve in `func_solve_mass_entity`
-        # (`abd/forward_dynamics.py`) has two reverse-mode issues that Quadrants
-        # AD silently mis-handles in `kernel_compute_qacc.grad`. We work around
-        # both from Python:
-        #
-        #   * Step 1 BW (`L^T w = vec`, backward substitution) has a cross-iter
-        #     self-referential write pattern that drops the adjoint chain across
-        #     outer-loop iterations. `func_solve_mass_entity` skips Step 1 in BW
-        #     mode; we run it externally as `n_dofs` separate kernel launches
-        #     (`kernel_solve_mass_step1_one_dof_bw`). See
-        #     `notes/quadrants_cross_iter_ad_limitation.md` and
-        #     `tests/test_quadrants_self_ref_ad.py` for the root cause.
-        #   * Step 2 BW (`out_bw[1] = out_bw[0] * D_inv`) is in principle trivial
-        #     to differentiate, but `kernel_compute_qacc.grad`'s tape silently
-        #     drops the `grad[out_bw[0]] += D_inv * grad[out_bw[1]]` contribution.
-        #     Isolated reverse-mode of the same pattern works, so this is
-        #     specific to `kernel_compute_qacc.grad`'s tape construction. We apply
-        #     Step 2 reverse manually as a separate kernel call.
-        #
-        # Ordering for backward:
-        #   1) per-DOF Step 1 forward (asc.) — populate `acc_smooth_bw[0]` for
-        #      `kernel_compute_qacc.grad`'s forward replay
-        #   2) `kernel_compute_qacc.grad` — covers Step 3 reverse and the
-        #      acc-smooth copy
-        #   3) `kernel_solve_mass_step2_reverse_bw` — manual Step 2 reverse,
-        #      seeds `acc_smooth_bw[0].grad`
-        #   4) per-DOF Step 1 `.grad()` (desc.) — propagates
-        #      `acc_smooth_bw[0].grad` into `dofs_state.force.grad`
-        for _k in range(self._max_n_dofs_across_entities):
-            kernel_solve_mass_step1_one_dof_bw(
-                _k,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-        kernel_compute_qacc.grad(
-            dofs_state=self.dofs_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
-        )
-        kernel_solve_mass_step2_reverse_bw(
+        # `func_solve_mass_entity` now runs Step 1 in BW mode too (writing into
+        # `acc_smooth_bw[0]`), so the forward replay produces correct primal.
+        # The manual kernel reads `dofs_state.acc.grad` and writes
+        # `dofs_state.force.grad` directly via M^-1 (same LDLT algorithm as
+        # forward — M = L^T D L is symmetric so M^-T = M^-1). `mass_mat.grad`
+        # is intentionally not seeded: `kernel_compute_mass_matrix.grad` is
+        # not invoked downstream, so the chain would die regardless.
+        kernel_manual_compute_qacc_bw(
             dofs_state=self.dofs_state,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-        for _k in reversed(range(self._max_n_dofs_across_entities)):
-            kernel_solve_mass_step1_one_dof_bw.grad(
-                _k,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
         # Option A: reverse of the Phase B-style factor_mass sequence we
         # pushed after `self.substep(f)`. Reverse order:
         #   Stage C.grad: mass_mat_L.grad / mass_mat_D_inv.grad → mass_mat_L_bw[1].grad

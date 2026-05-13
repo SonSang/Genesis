@@ -677,30 +677,27 @@ def func_solve_mass_entity(
 
         # Step 1: Solve w st. L^T @ w = y
         #
-        # In BW mode, the cross-iteration self-referential read of `out_bw[0, ...]`
-        # below was tripping a Quadrants AD limitation (the adjoint chain across
-        # outer-loop iterations dropped, see `tests/test_quadrants_self_ref_ad.py`
-        # / `notes/quadrants_cross_iter_ad_limitation.md`). Phase B works around
-        # this by running Step 1 as a sequence of single-DOF kernels in Python
-        # (`kernel_solve_mass_step1_one_dof_bw`) *outside* this function. So in
-        # BW mode we deliberately skip Step 1 here — by the time `func_compute_qacc`
-        # forward runs again inside `kernel_compute_qacc.grad`, the per-DOF kernels
-        # have already populated `out_bw[0, :, :]`. The corresponding `.grad()` of
-        # those kernels handles the reverse pass after `kernel_compute_qacc.grad`.
-        #
-        # The forward-mode path is unaffected: it uses a local `curr_out`
-        # accumulator and writes to `out` only once at the end, so Quadrants AD
-        # has no cross-iter dependency to handle.
-        if qd.static(not BW):
+        # FW mode: write w into `out`.
+        # BW mode: write w into `out_bw[0]` (Step 2 BW reads from there). This is
+        # plain forward execution (no AD tape on this call path — its `.grad` is
+        # never invoked; the reverse for the whole `func_compute_qacc` is handled
+        # by `kernel_manual_compute_qacc_bw`). The cross-iter same-buffer read
+        # of `out_bw[0, j_d]` was historically a problem because Quadrants AD
+        # silently drops the adjoint across outer iterations, but since we no
+        # longer differentiate this kernel, forward execution is correct.
+        if qd.static(BW):
             for i_d_ in range(n_dofs):
                 i_d = entity_dof_end - i_d_ - 1
                 curr_out = vec[i_d, i_b]
-
                 for j_d in range(i_d + 1, entity_dof_end):
-                    # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
-                    # finalized at this point, we don't need to care about AD mutation rule.
+                    curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
+                out_bw[0, i_d, i_b] = curr_out
+        else:
+            for i_d_ in range(n_dofs):
+                i_d = entity_dof_end - i_d_ - 1
+                curr_out = vec[i_d, i_b]
+                for j_d in range(i_d + 1, entity_dof_end):
                     curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
-
                 out[i_d, i_b] = curr_out
 
         # Step 2: z = D^{-1} w
@@ -1006,6 +1003,93 @@ def kernel_solve_mass_step2_reverse_bw(
                 dofs_state.acc_smooth_bw.grad[0, i_d, i_b] = (
                     dofs_state.acc_smooth_bw.grad[0, i_d, i_b]
                     + rigid_global_info.mass_mat_D_inv[i_d, i_b] * dofs_state.acc_smooth_bw.grad[1, i_d, i_b]
+                )
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_compute_qacc_bw(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Manual backward for `func_compute_qacc` via Implicit Function Theorem.
+
+    Replaces the Quadrants-traced reverse path
+    (`kernel_compute_qacc.grad` + Phase B externals
+    `kernel_solve_mass_step1_one_dof_bw` (.fwd + .grad) +
+    `kernel_solve_mass_step2_reverse_bw`) which silently drops the adjoint
+    chain inside `func_solve_mass_entity` (cross-iter same-buffer reads).
+
+    Forward chain (`func_compute_qacc`):
+        acc_smooth = M^{-1} . force   (via LDLT solve in `func_solve_mass`)
+        acc[i]     = acc_smooth[i]    (identity copy)
+
+    Reverse chain (manual, by IFT and symmetry of M = L^T D L):
+        acc_smooth.grad += acc.grad   (reverse of identity copy)
+        acc.grad         = 0          (forward overwrites acc)
+        force.grad      += M^{-1} . acc_smooth.grad
+                                       (M is symmetric, so M^{-T} = M^{-1})
+        (`mass_mat.grad` would be `-force.grad (x) acc_smooth` by IFT but
+         is a dead-end downstream: `kernel_compute_mass_matrix.grad` is
+         not invoked, so we skip seeding it. The Phase B factor_mass
+         reverses still run on `mass_mat_L.grad / mass_mat_D_inv.grad`
+         which are now zero, producing zero contribution — kept for
+         consistency, not regressed.)
+
+    LDLT structure (Genesis transposed convention M = L^T D L):
+        Step 1: solve L^T . u = acc_smooth.grad       (descending i_d)
+        Step 2:        v = D^{-1} . u
+        Step 3: solve L   . delta_force_grad = v      (ascending i_d)
+
+    Scratch: reuses `dofs_state.acc_smooth_bw[0/1]` since its forward
+    intermediate values are dead by the time this kernel runs.
+    """
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.force.shape[1]):
+        if rigid_global_info.mass_mat_mask[i_e, i_b]:
+            entity_dof_start = entities_info.dof_start[i_e]
+            entity_dof_end = entities_info.dof_end[i_e]
+            n_dofs = entities_info.n_dofs[i_e]
+
+            # Reverse of `acc[i] = acc_smooth[i]`: drain acc.grad → seed acc_smooth.grad.
+            # Stash the combined seed in `acc_smooth_bw[0]` as the input to the LDLT
+            # reverse solve. Then zero `acc.grad` since the forward copy overwrites
+            # `acc` (its old value is destroyed, so any prior `acc.grad` is consumed).
+            for i_d in range(entity_dof_start, entity_dof_end):
+                dofs_state.acc_smooth_bw[0, i_d, i_b] = (
+                    dofs_state.acc_smooth.grad[i_d, i_b] + dofs_state.acc.grad[i_d, i_b]
+                )
+                dofs_state.acc.grad[i_d, i_b] = 0.0
+                dofs_state.acc_smooth.grad[i_d, i_b] = 0.0
+
+            # Step 1: solve L^T . u = seed (input from [0], output to [1])
+            #   u[i] = seed[i] - sum_{j>i} L[j,i] * u[j]
+            for i_d_ in range(n_dofs):
+                i_d = entity_dof_end - i_d_ - 1
+                curr = dofs_state.acc_smooth_bw[0, i_d, i_b]
+                for j_d in range(i_d + 1, entity_dof_end):
+                    curr = curr - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * dofs_state.acc_smooth_bw[1, j_d, i_b]
+                dofs_state.acc_smooth_bw[1, i_d, i_b] = curr
+
+            # Step 2: v = D^{-1} . u (output to [0], overwriting input)
+            for i_d in range(entity_dof_start, entity_dof_end):
+                dofs_state.acc_smooth_bw[0, i_d, i_b] = (
+                    dofs_state.acc_smooth_bw[1, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+                )
+
+            # Step 3: solve L . delta = v (input from [0], output to [1])
+            #   delta[i] = v[i] - sum_{j<i} L[i,j] * delta[j]
+            for i_d in range(entity_dof_start, entity_dof_end):
+                curr = dofs_state.acc_smooth_bw[0, i_d, i_b]
+                for j_d in range(entity_dof_start, i_d):
+                    curr = curr - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * dofs_state.acc_smooth_bw[1, j_d, i_b]
+                dofs_state.acc_smooth_bw[1, i_d, i_b] = curr
+
+            # Accumulate into force.grad.
+            for i_d in range(entity_dof_start, entity_dof_end):
+                dofs_state.force.grad[i_d, i_b] = (
+                    dofs_state.force.grad[i_d, i_b] + dofs_state.acc_smooth_bw[1, i_d, i_b]
                 )
 
 
@@ -1578,11 +1662,10 @@ def func_integrate(
                                 dofs_state.vel_next[dof_start + 2, i_b],
                             ]
                         )
-                        # Backward pass requires atomic add
-                        if qd.static(BW):
-                            qd.atomic_add(pos, vel * rigid_global_info.substep_dt[None])
-                        else:
-                            pos = pos + vel * rigid_global_info.substep_dt[None]
+                        # In-place `+=` is required for Quadrants AD reverse-mode
+                        # to track the accumulation correctly. `pos = pos + ...`
+                        # would be SSA-reassign and may break the reverse chain.
+                        pos += vel * rigid_global_info.substep_dt[None]
                         for j in qd.static(range(3)):
                             rigid_global_info.qpos_next[q_start + j, i_b] = pos[j]
                     if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
