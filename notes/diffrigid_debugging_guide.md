@@ -381,6 +381,44 @@ def kernel_manual_X_bw(...):
 검증: manual replacement 적용 후 BW dump 에서 `input_field.grad` 가 manual
 호출 직후 0 이 되는지 확인. 0 안 되면 zeroing 누락.
 
+### P9. Manual backward 는 *모든* 분기/joint type/branch 를 faithful 하게 구현
+Auto-AD `.grad` kernel 은 forward kernel 의 *모든* 코드 경로를 cover. Manual
+backward 작성 시 일부 분기만 구현하고 나머지를 skip 하면 **그 분기를 사용하는
+topology / 시나리오에서 silent wrong gradient** 발생.
+
+**과거 사례 (J4 N=2 UCS.grad manual 시도)**:
+`kernel_manual_uc_bw_one_link` 가 FREE/REVOLUTE 만 구현하고 PRISMATIC/
+SPHERICAL/FIXED 는 skip. J3_prismatic topology 에서 manual 로 대체하니
+prismatic branch 가 silently no-op → `qpos.grad` 가 0 → J3 N=1 rel err
+FP64 floor 에서 100% 로 regression.
+
+**대응**:
+1. Forward kernel 의 모든 분기 / joint type / static 옵션을 *수식 단위로*
+   chain rule 작성. Skip 금지.
+2. Skip 이 불가피하다면 (구현 시간 제약 등) **silent skip 금지**:
+   - kernel 내부에서 `errno` flag 를 set (Genesis 의 `array_class.ErrorCode`
+     convention 활용. 새 코드 추가 시 새 ErrorCode 비트 정의).
+   - Python 호출 사이트에서 kernel 후 `errno` 검사. 미구현 branch hit 되면
+     명시적 `NotImplementedError` raise.
+   - 또는 Python 호출 사이트에서 entity joint type 을 *사전 검사* 해서 
+     unsupported 면 raise.
+3. 구현 시점에 미지원 분기를 명시적으로 docstring + 가이드에 기록.
+
+**왜 silent skip 이 위험한가**: 사용자가 J4 같은 topology 에서 manual fix
+검증 후 만족하면 production 에 도입. 나중에 다른 사용자가 PRISMATIC topology
+사용하면 *조용히* 잘못된 gradient 가 흘러나가서 학습이 실패하지만 원인 추적
+불가능. Explicit error 가 즉시 발견되도록 강제.
+
+```python
+# Anti-pattern (silent skip):
+elif joint_type == JOINT_TYPE.SPHERICAL:
+    pass  # ← unimplemented → wrong gradient
+
+# Correct (explicit fail):
+elif joint_type == JOINT_TYPE.SPHERICAL:
+    errno[i_b] |= ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+```
+
 ---
 
 ## Reusable diagnostic infrastructure
