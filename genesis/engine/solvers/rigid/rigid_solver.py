@@ -176,6 +176,9 @@ from .abd.diff import (
     kernel_copy_acc,
     kernel_copy_next_to_curr_no_check,
 )
+from .abd.manual_bw import (
+    kernel_manual_uc_bw_one_link,
+)
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -528,6 +531,23 @@ class RigidSolver(KinematicSolver):
             self.links_state_adjoint_cache = self.data_manager.links_state_adjoint_cache
             self.joints_state_adjoint_cache = self.data_manager.joints_state_adjoint_cache
             self.geoms_state_adjoint_cache = self.data_manager.geoms_state_adjoint_cache
+            # Pre-check: kernel_manual_uc_bw_one_link (the manual replacement
+            # for `kernel_update_cartesian_space_one_link.grad`) has no
+            # SPHERICAL backward yet. Raise early at build time so users
+            # don't only discover this on the first `.backward()` call.
+            # Guarded by `_requires_grad` because forward simulation is
+            # unaffected.
+            if self._n_joints > 0:
+                # `self.joints_info` is not bound yet inside `_create_data_manager`;
+                # read from `data_manager` directly.
+                joints_type_np = qd_to_numpy(self.data_manager.joints_info.type)
+                if (joints_type_np == int(gs.JOINT_TYPE.SPHERICAL)).any():
+                    gs.raise_exception(
+                        "Differentiable rigid simulation does not yet support SPHERICAL joints: "
+                        "`kernel_manual_uc_bw_one_link` has no backward branch for them. "
+                        "Either rewrite the joint as a chain of REVOLUTE joints or extend the kernel "
+                        "(see guide P9 in `notes/diffrigid_debugging_guide.md`)."
+                    )
 
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
@@ -1054,6 +1074,13 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS:
             gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
+        if errno & array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE:
+            gs.raise_exception(
+                "Encountered a joint type (SPHERICAL) for which `kernel_manual_uc_bw_one_link` has no backward "
+                "implementation. Extend the kernel per guide P9 before running differentiable simulation on this "
+                "topology — see `genesis/engine/solvers/rigid/abd/manual_bw.py` and "
+                "`notes/diffrigid_debugging_guide.md`."
+            )
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -1564,18 +1591,21 @@ class RigidSolver(KinematicSolver):
                     is_backward=True,
                 )
             for _offset in reversed(range(_MAX_LINKS)):
-                kernel_update_cartesian_space_one_link.grad(
+                # Manual FK Jacobian-transpose replacing the auto-AD UCS.grad
+                # (see `notes/diffrigid_handoff_ucs_translation_drop.md` for the
+                # silent drop motivating this). Handles FREE / REVOLUTE /
+                # PRISMATIC / FIXED faithfully. SPHERICAL flips an errno bit
+                # which `check_errno` translates into an exception below.
+                kernel_manual_uc_bw_one_link(
                     _offset,
                     links_state=self.links_state,
                     links_info=self.links_info,
-                    joints_state=self.joints_state,
                     joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
                     dofs_info=self.dofs_info,
                     entities_info=self.entities_info,
                     rigid_global_info=self._rigid_global_info,
                     static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
+                    errno=self._errno,
                 )
             self._debug_grad_dump(f"f={f} after post-update_cartesian_space.grad")
 
@@ -1753,18 +1783,21 @@ class RigidSolver(KinematicSolver):
                     is_backward=True,
                 )
             for _offset in reversed(range(_MAX_LINKS)):
-                kernel_update_cartesian_space_one_link.grad(
+                # Manual FK Jacobian-transpose replacing the auto-AD UCS.grad
+                # (see `notes/diffrigid_handoff_ucs_translation_drop.md` for the
+                # silent drop motivating this). Handles FREE / REVOLUTE /
+                # PRISMATIC / FIXED faithfully. SPHERICAL flips an errno bit
+                # which `check_errno` translates into an exception below.
+                kernel_manual_uc_bw_one_link(
                     _offset,
                     links_state=self.links_state,
                     links_info=self.links_info,
-                    joints_state=self.joints_state,
                     joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
                     dofs_info=self.dofs_info,
                     entities_info=self.entities_info,
                     rigid_global_info=self._rigid_global_info,
                     static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
+                    errno=self._errno,
                 )
             self._debug_grad_dump(f"f={f} after initial-UCS+FV.grad (end)")
 

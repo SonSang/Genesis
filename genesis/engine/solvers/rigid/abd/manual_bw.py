@@ -305,48 +305,60 @@ def kernel_manual_uc_bw_one_link(
                     links_state.quat.grad[i_l, i_b][j] = 0.0
 
             elif joint_type == gs.JOINT_TYPE.REVOLUTE:
-                parent_idx = links_info.parent_idx[I_l]
-                # Forward primal: parent_quat = links_state.quat[parent_idx, i_b]
-                parent_quat = links_state.quat[parent_idx, i_b]
-                arm_local = links_info.pos[I_l]
-
+                # Forward:
+                #   If has parent:
+                #     pos_init  = parent_pos + R(parent_quat) · links_info.pos[I_l]
+                #     quat_init = quat_mul(qloc, parent_quat)  via qd_transform_quat_by_quat
+                #   else:
+                #     pos_init  = links_info.pos[I_l]    (constant)
+                #     quat_init = links_info.quat[I_l]   (constant)
+                #   qloc      = rotvec_to_quat(axis · angle)
+                #   link_quat = quat_mul(qloc, quat_init)
+                #   link_pos  = pos_init   (assuming joints_info.pos = 0, true for default MJCF)
                 I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
                 axis = dofs_info.motion_ang[I_d]
                 angle = rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
                 rotvec = axis * angle
                 qloc = gu.qd_rotvec_to_quat(rotvec, rigid_global_info.EPS[None])
-
-                # Backward chain
+                parent_idx = links_info.parent_idx[I_l]
                 arm_pos_grad = links_state.pos.grad[i_l, i_b]
                 arm_quat_grad = links_state.quat.grad[i_l, i_b]
 
-                # arm_pos = parent_pos + R(parent_quat) · arm_local
-                parent_quat_grad_from_pos = d_transform_by_quat__dq(arm_local, parent_quat, arm_pos_grad)
+                if parent_idx != -1:
+                    parent_quat = links_state.quat[parent_idx, i_b]
+                    arm_local = links_info.pos[I_l]
+                    # arm_pos = parent_pos + R(parent_quat) · arm_local
+                    parent_quat_grad_from_pos = d_transform_by_quat__dq(arm_local, parent_quat, arm_pos_grad)
 
-                # arm_quat = qloc ⊗ parent_quat  (Hamilton: out = qloc·parent_quat)
-                qloc_grad = d_quat_mul__dlhs(qloc, parent_quat, arm_quat_grad)
-                parent_quat_grad_from_quat = d_quat_mul__drhs(qloc, parent_quat, arm_quat_grad)
+                    # arm_quat = qloc ⊗ parent_quat (lhs=qloc, rhs=parent_quat)
+                    qloc_grad = d_quat_mul__dlhs(qloc, parent_quat, arm_quat_grad)
+                    parent_quat_grad_from_quat = d_quat_mul__drhs(qloc, parent_quat, arm_quat_grad)
 
-                # qloc = rotvec_to_quat(axis · angle)
-                rotvec_grad = d_rotvec_to_quat__drotvec(rotvec, rigid_global_info.EPS[None], qloc_grad)
-                angle_grad = axis[0] * rotvec_grad[0] + axis[1] * rotvec_grad[1] + axis[2] * rotvec_grad[2]
+                    # qloc = rotvec_to_quat(axis · angle)
+                    rotvec_grad = d_rotvec_to_quat__drotvec(rotvec, rigid_global_info.EPS[None], qloc_grad)
+                    angle_grad = axis[0] * rotvec_grad[0] + axis[1] * rotvec_grad[1] + axis[2] * rotvec_grad[2]
+                    rigid_global_info.qpos.grad[q_start, i_b] = rigid_global_info.qpos.grad[q_start, i_b] + angle_grad
 
-                # Accumulate into qpos
-                rigid_global_info.qpos.grad[q_start, i_b] = rigid_global_info.qpos.grad[q_start, i_b] + angle_grad
+                    for j in qd.static(range(3)):
+                        links_state.pos.grad[parent_idx, i_b][j] = (
+                            links_state.pos.grad[parent_idx, i_b][j] + arm_pos_grad[j]
+                        )
+                    for j in qd.static(range(4)):
+                        links_state.quat.grad[parent_idx, i_b][j] = (
+                            links_state.quat.grad[parent_idx, i_b][j]
+                            + parent_quat_grad_from_pos[j]
+                            + parent_quat_grad_from_quat[j]
+                        )
+                else:
+                    # No parent: pos_init/quat_init are link-level constants.
+                    # arm_pos.grad doesn't chain anywhere (constant).
+                    # arm_quat = qloc ⊗ quat_init  ⇒  qloc_grad = d_quat_mul__dlhs.
+                    quat_init = links_info.quat[I_l]
+                    qloc_grad = d_quat_mul__dlhs(qloc, quat_init, arm_quat_grad)
+                    rotvec_grad = d_rotvec_to_quat__drotvec(rotvec, rigid_global_info.EPS[None], qloc_grad)
+                    angle_grad = axis[0] * rotvec_grad[0] + axis[1] * rotvec_grad[1] + axis[2] * rotvec_grad[2]
+                    rigid_global_info.qpos.grad[q_start, i_b] = rigid_global_info.qpos.grad[q_start, i_b] + angle_grad
 
-                # Accumulate into parent's links_state grads (NOTE: same-buffer
-                # cross-index write within a single launch — write only, not
-                # read in same launch, so per-launch access rule is honored).
-                for j in qd.static(range(3)):
-                    links_state.pos.grad[parent_idx, i_b][j] = (
-                        links_state.pos.grad[parent_idx, i_b][j] + arm_pos_grad[j]
-                    )
-                for j in qd.static(range(4)):
-                    links_state.quat.grad[parent_idx, i_b][j] = (
-                        links_state.quat.grad[parent_idx, i_b][j]
-                        + parent_quat_grad_from_pos[j]
-                        + parent_quat_grad_from_quat[j]
-                    )
                 # Per guide P8: zero consumed input .grad for this link.
                 for j in qd.static(range(3)):
                     links_state.pos.grad[i_l, i_b][j] = 0.0
