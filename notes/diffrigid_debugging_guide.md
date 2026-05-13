@@ -318,10 +318,20 @@ forward chain 의 **load-bearing** field 에 있음.
 **과거 경험**: 다양한 link-state `.grad` 잔여값을 zeroing 시도했지만 J1/J4
 multistep 결과 변화 없었음 (`notes/diag_j1_n2_substep_leak.txt` 참고).
 
-### P7. `substep_pre_coupling_grad` 의 함수 순서 변경 금지
+### P7. `substep_pre_coupling_grad` 의 함수 순서 / 호출 *추가/삭제* 금지
 이 함수 안의 kernel 호출 순서는 *state semantics* 가 미묘하게 얽혀 있음.
-순서를 바꾸면 forward primal 의 timestamp 가 어긋나서 silent wrong gradient
-발생.
+순서를 바꾸거나 *호출을 제거* 하면 forward primal 의 timestamp 가 어긋나거나
+chain rule 이 누락되어 silent wrong gradient 발생.
+
+**특히 절대 금지**:
+- ❌ "이 호출은 baseline 에서 silent drop 으로 무해했으니 제거하자" — 
+  manual backward 로 대체했을 땐 silent drop 이 사라져서 *정상적인 chain
+  contribution* 이 발생. 제거하면 그 contribution 이 *전부 사라짐*.
+- ❌ "이 호출은 중복인 것 같다" 또는 "이건 안 써도 결과 같다" 라는 추측에
+  의한 제거.
+- ❌ 한 자리의 auto-AD `.grad` 만 manual 로 바꾸고 다른 자리의 동일 kernel
+  `.grad` 는 그대로 두기. 두 자리의 동작이 *대칭으로* 바뀌어야 chain rule
+  의 conservation 이 유지됨.
 
 특히 주의할 페어:
 - `kernel_copy_next_to_curr_no_check` ↔ UCS.grad chain — `qpos` 가 어느
@@ -330,14 +340,46 @@ multistep 결과 변화 없었음 (`notes/diag_j1_n2_substep_leak.txt` 참고).
   state restore 가 한 번에 일어남
 - forward replay 의 `self.substep(f)` 호출 시점 — adjoint cache 가
   여기서 다시 save 되므로 위치 바꾸면 cache content 달라짐
+- 같은 kernel 의 `.grad` 가 *여러 자리* 에서 호출되는 경우 (mid-SPC + 
+  initial block 등) — 한 자리만 바꾸면 양쪽 동작 비대칭
 
 **대응**:
-1. 순서를 바꿔야 한다고 생각되면, **반드시** 변경 전후로 J1~J5 전체 sweep
-   돌려서 regression 확인.
+1. 변경 전후로 J1~J5 전체 sweep 돌려서 regression 확인.
 2. 새 kernel 을 *추가* 할 때는 기존 순서를 *변경하지 않고* 적절한 위치에
    삽입.
-3. 만약 정말 바꿔야 한다면, 각 kernel 이 의존하는 forward primal 의
+3. Auto-AD `.grad` 를 manual 로 대체할 때는 *모든* 호출 자리에서 대체.
+4. 만약 정말 바꿔야 한다면, 각 kernel 이 의존하는 forward primal 의
    timestamp 를 문서화하고 변경 후에도 일관되는지 검증.
+
+### P8. Manual backward 작성 시 consume 된 `.grad` 를 0 으로 reset
+Auto-AD `.grad` kernel 은 입력 `.grad` field 를 *consume 후 zero* 함 (typical
+AD convention). Manual backward 작성 시 이 동작을 *그대로 mirror* 해야 함.
+
+**왜 중요한가**: 같은 `.grad` field 가 BW chain 의 여러 자리에서 reverse
+입력으로 쓰일 수 있음. 한 곳에서 consume 후 zero 안 하면 다른 곳에서 *같은
+값을 다시 consume* → double-counting.
+
+**과거 사례 (J4 N=2 UCS.grad)**: `kernel_manual_uc_bw_one_link` 가
+`links_state.pos.grad` / `links_state.quat.grad` 를 읽기만 하고 zero 안 함.
+`substep_pre_coupling_grad` 의 mid-SPC 와 initial 두 자리에서 동일 manual
+kernel 이 호출되며 두 번째 호출이 첫 번째 호출이 consume 했어야 할 값을 *다시
+consume* → translation chain 2x double-count → root_x rel err 100% (FP64
+floor 였던 게 100% off).
+
+**대응 (manual kernel 작성 시)**:
+```python
+@qd.kernel
+def kernel_manual_X_bw(...):
+    # 1. Read input .grad
+    g = input_field.grad[i]
+    # 2. Compute chain rule output
+    output_field.grad[j] += jacobian * g
+    # 3. **MUST**: zero input .grad after consumption (mirror auto-AD)
+    input_field.grad[i] = 0.0
+```
+
+검증: manual replacement 적용 후 BW dump 에서 `input_field.grad` 가 manual
+호출 직후 0 이 되는지 확인. 0 안 되면 zeroing 누락.
 
 ---
 

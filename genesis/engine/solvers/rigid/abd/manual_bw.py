@@ -290,6 +290,13 @@ def kernel_manual_uc_bw_one_link(
                     rigid_global_info.qpos.grad[q_start + 3 + j, i_b] = (
                         rigid_global_info.qpos.grad[q_start + 3 + j, i_b] + quat_grad[j]
                     )
+                # Per guide P8: zero consumed input .grad to mirror auto-AD
+                # consume-after-use convention. Otherwise subsequent kernel
+                # calls reading the same field will double-count.
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
 
             elif joint_type == gs.JOINT_TYPE.REVOLUTE:
                 parent_idx = links_info.parent_idx[I_l]
@@ -334,4 +341,9 @@ def kernel_manual_uc_bw_one_link(
                         + parent_quat_grad_from_pos[j]
                         + parent_quat_grad_from_quat[j]
                     )
+                # Per guide P8: zero consumed input .grad for this link.
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
             # PRISMATIC / SPHERICAL / FIXED not yet implemented — skipped.
