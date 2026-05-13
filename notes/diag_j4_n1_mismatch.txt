@@ -1,0 +1,35 @@
+J4 N=1 ana vs FD mismatch (per-DOF, per-seed)
+====================================================================================================
+
+seed=1000
+  DOF                               analytical              FD      diff (a-f)         rel
+  d=0 root_x                         2.666e-05       2.666e-05      -2.301e-13       -0.00
+  d=1 root_y                        -1.849e-09      -3.331e-09       1.482e-09        0.44  <-- ana < 0.7× fd (silent drop)
+  d=2 root_z                         9.716e-09       9.379e-09       3.372e-10        0.04
+  d=3 root_wx (axis-angle)           0.000e+00      -1.041e-12       1.041e-12        1.00
+  d=4 root_wy                        1.181e-09      -2.403e-09       3.584e-09        1.49  <-- ana < 0.7× fd (silent drop)
+  d=5 root_wz                       -7.403e-09       7.406e-09      -1.481e-08       -2.00
+  d=6 arm_revolute                   3.968e-09       4.600e-09      -6.323e-10       -0.14
+  max|diff| = 1.481e-08
+
+seed=1001
+  DOF                               analytical              FD      diff (a-f)         rel
+  d=0 root_x                         2.667e-05       2.667e-05       1.253e-13        0.00
+  d=1 root_y                        -5.048e-10      -9.357e-10       4.309e-10        0.46
+  d=2 root_z                        -6.208e-09      -4.222e-09      -1.987e-09       -0.47
+  d=3 root_wx (axis-angle)           0.000e+00       3.469e-13      -3.469e-13       -0.00
+  d=4 root_wy                       -1.022e-08       1.090e-08      -2.112e-08       -1.94
+  d=5 root_wz                       -2.159e-09       2.158e-09      -4.317e-09       -2.00
+  d=6 arm_revolute                  -4.766e-10      -4.203e-09       3.727e-09        0.89  <-- ana < 0.7× fd (silent drop)
+  max|diff| = 2.112e-08
+
+seed=1002
+  DOF                               analytical              FD      diff (a-f)         rel
+  d=0 root_x                         2.667e-05       2.667e-05       2.304e-13        0.00
+  d=1 root_y                        -9.510e-09      -7.895e-09      -1.616e-09       -0.20
+  d=2 root_z                         9.227e-09       1.071e-08      -1.487e-09       -0.14
+  d=3 root_wx (axis-angle)           0.000e+00       3.469e-12      -3.469e-12       -1.00
+  d=4 root_wy                       -8.536e-09       7.258e-09      -1.579e-08       -2.18
+  d=5 root_wz                        8.079e-09      -8.079e-09       1.616e-08        2.00
+  d=6 arm_revolute                   5.867e-09       3.080e-09       2.787e-09        0.91  <-- ana > 1.5× fd (over-count)
+  max|diff| = 1.616e-08

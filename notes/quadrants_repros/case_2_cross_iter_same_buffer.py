@@ -100,8 +100,8 @@ def run(kernel, expected, label):
         out.grad[i] = 1.0  # loss = sum(out)
         vec.grad[i] = 0.0
 
-    kernel(vec, out)
     kernel.grad(vec, out)
+    kernel(vec, out)
 
     analytical = np.array([float(vec.grad[i]) for i in range(N)])
 

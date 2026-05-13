@@ -1,0 +1,196 @@
+
+=== [GRAD f=0 entry] ===
+  links_state.pos  max=4.000e-01  norm=4.000e-01
+  -- 42 fields with max=0 --
+     rigid_global_info.qpos, dofs_state.vel, dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after post-fwd_velocity.grad] ===
+  links_state.pos  max=4.000e-01  norm=4.000e-01
+  -- 42 fields with max=0 --
+     rigid_global_info.qpos, dofs_state.vel, dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after post-COM_links.grad] ===
+  links_state.pos  max=4.000e-01  norm=4.000e-01
+  -- 42 fields with max=0 --
+     rigid_global_info.qpos, dofs_state.vel, dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after post-update_cartesian_space.grad] ===
+  rigid_global_info.qpos  max=3.999e-01  norm=4.307e-01
+  -- 42 fields with max=0 --
+     dofs_state.vel, dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after begin_backward_substep] ===
+  -- 43 fields with max=0 --
+     rigid_global_info.qpos, dofs_state.vel, dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after step_2.grad] ===
+  rigid_global_info.qpos  max=3.999e-01  norm=4.307e-01
+  dofs_state.vel          max=3.999e-03  norm=3.999e-03
+  dofs_state.acc          max=3.999e-05  norm=3.999e-05
+  -- 40 fields with max=0 --
+     dofs_state.pos, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after compute_qacc.grad] ===
+  rigid_global_info.qpos      max=3.999e-01  norm=4.307e-01
+  dofs_state.vel              max=3.999e-03  norm=3.999e-03
+  rigid_global_info.mass_mat  max=1.150e-04  norm=1.541e-04
+  dofs_state.acc_smooth_bw    max=3.999e-05  norm=3.999e-05
+  dofs_state.force            max=2.666e-05  norm=2.666e-05
+  -- 38 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.cfrc_applied_ang, links_state.cfrc_applied_vel, links_state.cfrc_coupling_ang, links_state.cfrc_coupling_vel, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after fwd_dynamics_without_qacc.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=3.999e-03  norm=3.999e-03
+  dofs_state.cdof_vel            max=1.068e-04  norm=1.646e-04
+  links_state.cinr_pos           max=6.022e-05  norm=1.063e-04
+  dofs_state.acc_smooth_bw       max=3.999e-05  norm=3.999e-05
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  dofs_state.cdof_ang            max=7.829e-06  norm=1.167e-05
+  dofs_state.cdofd_vel           max=1.131e-06  norm=1.640e-06
+  links_state.cd_vel             max=7.538e-07  norm=1.109e-06
+  links_state.cd_ang             max=2.378e-07  norm=2.727e-07
+  links_state.cinr_inertial      max=5.165e-08  norm=1.117e-07
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  links_state.cinr_mass          max=8.507e-10  norm=8.695e-10
+  dofs_state.cdofd_ang           max=7.336e-11  norm=1.391e-10
+  -- 27 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 entry] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=3.999e-03  norm=3.999e-03
+  dofs_state.cdof_vel            max=1.068e-04  norm=1.646e-04
+  links_state.cinr_pos           max=6.022e-05  norm=1.063e-04
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  dofs_state.cdof_ang            max=7.829e-06  norm=1.167e-05
+  dofs_state.cdofd_vel           max=1.131e-06  norm=1.640e-06
+  links_state.cd_vel             max=7.538e-07  norm=1.109e-06
+  links_state.cd_ang             max=2.378e-07  norm=2.727e-07
+  links_state.cinr_inertial      max=5.165e-08  norm=1.117e-07
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  links_state.cinr_mass          max=8.507e-10  norm=8.695e-10
+  dofs_state.cdofd_ang           max=7.336e-11  norm=1.391e-10
+  -- 28 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after post-fwd_velocity.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=3.999e-03  norm=3.999e-03
+  dofs_state.cdof_vel            max=1.068e-04  norm=1.646e-04
+  links_state.cinr_pos           max=6.022e-05  norm=1.063e-04
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  dofs_state.cdof_ang            max=7.829e-06  norm=1.167e-05
+  links_state.cinr_inertial      max=5.165e-08  norm=1.117e-07
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  links_state.cinr_mass          max=8.507e-10  norm=8.695e-10
+  -- 32 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after post-COM_links.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=3.999e-03  norm=3.999e-03
+  joints_state.xanchor           max=8.220e-05  norm=1.238e-04
+  links_state.pos                max=5.479e-05  norm=8.265e-05
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  links_state.quat               max=6.021e-06  norm=7.725e-06
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  joints_state.xaxis             max=2.381e-09  norm=2.633e-09
+  -- 33 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after post-update_cartesian_space.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=3.999e-03  norm=3.999e-03
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  -- 37 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after begin_backward_substep] ===
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  -- 39 fields with max=0 --
+     rigid_global_info.qpos, dofs_state.vel, dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after step_2.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=7.998e-03  norm=7.998e-03
+  dofs_state.acc                 max=7.998e-05  norm=7.998e-05
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  -- 36 fields with max=0 --
+     dofs_state.pos, dofs_state.acc_smooth, dofs_state.acc_smooth_bw, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after compute_qacc.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=7.998e-03  norm=7.998e-03
+  rigid_global_info.mass_mat     max=1.701e-04  norm=2.711e-04
+  dofs_state.acc_smooth_bw       max=7.998e-05  norm=7.998e-05
+  dofs_state.force               max=5.332e-05  norm=5.332e-05
+  links_state.cfrc_applied_vel   max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_coupling_vel  max=2.666e-05  norm=3.770e-05
+  links_state.cfrc_applied_ang   max=1.946e-08  norm=3.148e-08
+  links_state.cfrc_coupling_ang  max=1.946e-08  norm=3.148e-08
+  -- 34 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after fwd_dynamics_without_qacc.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=7.998e-03  norm=7.998e-03
+  dofs_state.cdof_vel            max=2.261e-04  norm=3.297e-04
+  links_state.cinr_pos           max=1.508e-04  norm=2.584e-04
+  dofs_state.acc_smooth_bw       max=7.998e-05  norm=7.998e-05
+  links_state.cfrc_applied_vel   max=7.998e-05  norm=1.131e-04
+  links_state.cfrc_coupling_vel  max=5.332e-05  norm=7.541e-05
+  dofs_state.cdof_ang            max=2.111e-05  norm=2.695e-05
+  dofs_state.cdofd_vel           max=2.261e-06  norm=3.280e-06
+  links_state.cd_vel             max=1.508e-06  norm=2.219e-06
+  links_state.cd_ang             max=4.755e-07  norm=5.453e-07
+  links_state.cinr_inertial      max=8.681e-08  norm=1.454e-07
+  links_state.cfrc_applied_ang   max=5.719e-08  norm=9.151e-08
+  links_state.cfrc_coupling_ang  max=3.773e-08  norm=6.006e-08
+  links_state.cinr_mass          max=3.109e-08  norm=3.632e-08
+  dofs_state.cdofd_ang           max=1.440e-10  norm=2.693e-10
+  -- 27 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after initial-COM_links.grad] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=7.998e-03  norm=7.998e-03
+  joints_state.xanchor           max=2.261e-04  norm=3.237e-04
+  links_state.pos                max=1.508e-04  norm=2.219e-04
+  dofs_state.acc_smooth_bw       max=7.998e-05  norm=7.998e-05
+  links_state.cfrc_applied_vel   max=7.998e-05  norm=1.131e-04
+  links_state.cfrc_coupling_vel  max=5.332e-05  norm=7.541e-05
+  links_state.quat               max=1.508e-05  norm=1.531e-05
+  links_state.cfrc_applied_ang   max=5.719e-08  norm=9.151e-08
+  links_state.cfrc_coupling_ang  max=3.773e-08  norm=6.006e-08
+  joints_state.xaxis             max=8.742e-09  norm=1.099e-08
+  -- 32 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw
+
+=== [GRAD f=0 after initial-UCS+FV.grad (end)] ===
+  rigid_global_info.qpos         max=3.999e-01  norm=4.307e-01
+  dofs_state.vel                 max=7.998e-03  norm=7.998e-03
+  dofs_state.acc_smooth_bw       max=7.998e-05  norm=7.998e-05
+  links_state.cfrc_applied_vel   max=7.998e-05  norm=1.131e-04
+  links_state.cfrc_coupling_vel  max=5.332e-05  norm=7.541e-05
+  links_state.cfrc_applied_ang   max=5.719e-08  norm=9.151e-08
+  links_state.cfrc_coupling_ang  max=3.773e-08  norm=6.006e-08
+  -- 36 fields with max=0 --
+     dofs_state.pos, dofs_state.acc, dofs_state.acc_smooth, dofs_state.force, dofs_state.qf_bias, dofs_state.qf_smooth, dofs_state.qf_passive, dofs_state.qf_applied, links_state.pos, links_state.quat, links_state.pos_bw, links_state.quat_bw, links_state.cd_vel, links_state.cd_ang, links_state.cdd_vel, links_state.cdd_ang, links_state.cfrc_vel, links_state.cfrc_ang, dofs_state.cdofd_vel, dofs_state.cdofd_ang, dofs_state.cdof_vel, dofs_state.cdof_ang, links_state.cinr_inertial, links_state.cinr_pos, links_state.cinr_mass, links_state.crb_inertial, links_state.crb_pos, links_state.crb_mass, links_state.i_pos, links_state.i_quat, joints_state.xanchor, joints_state.xaxis, rigid_global_info.mass_mat, rigid_global_info.mass_mat_L, rigid_global_info.mass_mat_D_inv, rigid_global_info.mass_mat_L_bw

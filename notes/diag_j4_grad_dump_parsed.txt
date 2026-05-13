@@ -1,0 +1,425 @@
+Parsed 18 stage dumps
+
+=== Stage-by-stage magnitude per field ===
+field                                           s0:f=0 entrs0:f=0 aftes0:f=0 aftes0:f=0 aftes0:f=0 aftes0:f=0 aftes0:f=0 aftes0:f=0 aftes1:f=0 entrs1:f=0 aftes1:f=0 aftes1:f=0 aftes1:f=0 aftes1:f=0 aftes1:f=0 aftes1:f=0 aftes1:f=0 aftes1:f=0 afte
+dofs_state.acc                                            -          -          -          -          -    4.0e-05          -          -          -          -          -          -          -    8.0e-05          -          -          -          -
+dofs_state.acc_smooth                                     -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+dofs_state.acc_smooth_bw                                  -          -          -          -          -          -    4.0e-05    4.0e-05          -          -          -          -          -          -    8.0e-05    8.0e-05    8.0e-05    8.0e-05
+dofs_state.cdof_ang                                       -          -          -          -          -          -          -    7.8e-06    7.8e-06    7.8e-06          -          -          -          -          -    2.1e-05          -          -
+dofs_state.cdof_vel                                       -          -          -          -          -          -          -    1.1e-04    1.1e-04    1.1e-04          -          -          -          -          -    2.3e-04          -          -
+dofs_state.cdofd_ang                                      -          -          -          -          -          -          -    7.3e-11    7.3e-11          -          -          -          -          -          -    1.4e-10          -          -
+dofs_state.cdofd_vel                                      -          -          -          -          -          -          -    1.1e-06    1.1e-06          -          -          -          -          -          -    2.3e-06          -          -
+dofs_state.force                                          -          -          -          -          -          -    2.7e-05          -          -          -          -          -          -          -    5.3e-05          -          -          -
+dofs_state.pos                                            -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+dofs_state.qf_applied                                     -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+dofs_state.qf_bias                                        -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+dofs_state.qf_passive                                     -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+dofs_state.qf_smooth                                      -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+dofs_state.vel                                            -          -          -          -          -    4.0e-03    4.0e-03    4.0e-03    4.0e-03    4.0e-03    4.0e-03    4.0e-03          -    8.0e-03    8.0e-03    8.0e-03    8.0e-03    8.0e-03
+joints_state.xanchor                                      -          -          -          -          -          -          -          -          -          -    8.2e-05          -          -          -          -          -    2.3e-04          -
+joints_state.xaxis                                        -          -          -          -          -          -          -          -          -          -    2.4e-09          -          -          -          -          -    8.7e-09          -
+links_state.cd_ang                                        -          -          -          -          -          -          -    2.4e-07    2.4e-07          -          -          -          -          -          -    4.8e-07          -          -
+links_state.cd_vel                                        -          -          -          -          -          -          -    7.5e-07    7.5e-07          -          -          -          -          -          -    1.5e-06          -          -
+links_state.cdd_ang                                       -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.cdd_vel                                       -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.cfrc_ang                                      -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.cfrc_applied_ang                              -          -          -          -          -          -          -    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    5.7e-08    5.7e-08    5.7e-08
+links_state.cfrc_applied_vel                              -          -          -          -          -          -          -    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    8.0e-05    8.0e-05    8.0e-05
+links_state.cfrc_coupling_ang                             -          -          -          -          -          -          -    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    1.9e-08    3.8e-08    3.8e-08    3.8e-08
+links_state.cfrc_coupling_vel                             -          -          -          -          -          -          -    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    2.7e-05    5.3e-05    5.3e-05    5.3e-05
+links_state.cfrc_vel                                      -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.cinr_inertial                                 -          -          -          -          -          -          -    5.2e-08    5.2e-08    5.2e-08          -          -          -          -          -    8.7e-08          -          -
+links_state.cinr_mass                                     -          -          -          -          -          -          -    8.5e-10    8.5e-10    8.5e-10          -          -          -          -          -    3.1e-08          -          -
+links_state.cinr_pos                                      -          -          -          -          -          -          -    6.0e-05    6.0e-05    6.0e-05          -          -          -          -          -    1.5e-04          -          -
+links_state.crb_inertial                                  -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.crb_mass                                      -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.crb_pos                                       -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.i_pos                                         -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.i_quat                                        -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.pos                                     4.0e-01    4.0e-01    4.0e-01          -          -          -          -          -          -          -    5.5e-05          -          -          -          -          -    1.5e-04          -
+links_state.pos_bw                                        -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+links_state.quat                                          -          -          -          -          -          -          -          -          -          -    6.0e-06          -          -          -          -          -    1.5e-05          -
+links_state.quat_bw                                       -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+rigid_global_info.mass_mat                                -          -          -          -          -          -    1.2e-04          -          -          -          -          -          -          -    1.7e-04          -          -          -
+rigid_global_info.mass_mat_D_inv                          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+rigid_global_info.mass_mat_L                              -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+rigid_global_info.mass_mat_L_bw                           -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -          -
+rigid_global_info.qpos                                    -          -          -    4.0e-01          -    4.0e-01    4.0e-01    4.0e-01    4.0e-01    4.0e-01    4.0e-01    4.0e-01          -    4.0e-01    4.0e-01    4.0e-01    4.0e-01    4.0e-01
+
+=== Silent-drop candidates (nonzero -> 0 transition) ===
+  s0 f=0 after post-COM_links.grad                  ->  f=0 after post-update_cartesian_space.grad     links_state.pos: 4.000e-01 -> 0
+  s0 f=0 after post-update_cartesian_space.grad     ->  f=0 after begin_backward_substep               rigid_global_info.qpos: 3.999e-01 -> 0
+  s0 f=0 after step_2.grad                          ->  f=0 after compute_qacc.grad                    dofs_state.acc: 3.999e-05 -> 0
+  s0 f=0 after compute_qacc.grad                    ->  f=0 after fwd_dynamics_without_qacc.grad       dofs_state.force: 2.666e-05 -> 0
+  s0 f=0 after compute_qacc.grad                    ->  f=0 after fwd_dynamics_without_qacc.grad       rigid_global_info.mass_mat: 1.150e-04 -> 0
+  s1 f=0 entry                                      ->  f=0 after post-fwd_velocity.grad               links_state.cd_vel: 7.538e-07 -> 0
+  s1 f=0 entry                                      ->  f=0 after post-fwd_velocity.grad               links_state.cd_ang: 2.378e-07 -> 0
+  s1 f=0 entry                                      ->  f=0 after post-fwd_velocity.grad               dofs_state.cdofd_vel: 1.131e-06 -> 0
+  s1 f=0 entry                                      ->  f=0 after post-fwd_velocity.grad               dofs_state.cdofd_ang: 7.336e-11 -> 0
+  s1 f=0 after post-fwd_velocity.grad               ->  f=0 after post-COM_links.grad                  dofs_state.cdof_vel: 1.068e-04 -> 0
+  s1 f=0 after post-fwd_velocity.grad               ->  f=0 after post-COM_links.grad                  dofs_state.cdof_ang: 7.829e-06 -> 0
+  s1 f=0 after post-fwd_velocity.grad               ->  f=0 after post-COM_links.grad                  links_state.cinr_inertial: 5.165e-08 -> 0
+  s1 f=0 after post-fwd_velocity.grad               ->  f=0 after post-COM_links.grad                  links_state.cinr_pos: 6.022e-05 -> 0
+  s1 f=0 after post-fwd_velocity.grad               ->  f=0 after post-COM_links.grad                  links_state.cinr_mass: 8.507e-10 -> 0
+  s1 f=0 after post-COM_links.grad                  ->  f=0 after post-update_cartesian_space.grad     links_state.pos: 5.479e-05 -> 0
+  s1 f=0 after post-COM_links.grad                  ->  f=0 after post-update_cartesian_space.grad     links_state.quat: 6.021e-06 -> 0
+  s1 f=0 after post-COM_links.grad                  ->  f=0 after post-update_cartesian_space.grad     joints_state.xanchor: 8.220e-05 -> 0
+  s1 f=0 after post-COM_links.grad                  ->  f=0 after post-update_cartesian_space.grad     joints_state.xaxis: 2.381e-09 -> 0
+  s1 f=0 after post-update_cartesian_space.grad     ->  f=0 after begin_backward_substep               rigid_global_info.qpos: 3.999e-01 -> 0
+  s1 f=0 after post-update_cartesian_space.grad     ->  f=0 after begin_backward_substep               dofs_state.vel: 3.999e-03 -> 0
+  s1 f=0 after step_2.grad                          ->  f=0 after compute_qacc.grad                    dofs_state.acc: 7.998e-05 -> 0
+  s1 f=0 after compute_qacc.grad                    ->  f=0 after fwd_dynamics_without_qacc.grad       dofs_state.force: 5.332e-05 -> 0
+  s1 f=0 after compute_qacc.grad                    ->  f=0 after fwd_dynamics_without_qacc.grad       rigid_global_info.mass_mat: 1.701e-04 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               links_state.cd_vel: 1.508e-06 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               links_state.cd_ang: 4.755e-07 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               dofs_state.cdofd_vel: 2.261e-06 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               dofs_state.cdofd_ang: 1.440e-10 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               dofs_state.cdof_vel: 2.261e-04 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               dofs_state.cdof_ang: 2.111e-05 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               links_state.cinr_inertial: 8.681e-08 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               links_state.cinr_pos: 1.508e-04 -> 0
+  s1 f=0 after fwd_dynamics_without_qacc.grad       ->  f=0 after initial-COM_links.grad               links_state.cinr_mass: 3.109e-08 -> 0
+  s1 f=0 after initial-COM_links.grad               ->  f=0 after initial-UCS+FV.grad (end)            links_state.pos: 1.508e-04 -> 0
+  s1 f=0 after initial-COM_links.grad               ->  f=0 after initial-UCS+FV.grad (end)            links_state.quat: 1.508e-05 -> 0
+  s1 f=0 after initial-COM_links.grad               ->  f=0 after initial-UCS+FV.grad (end)            joints_state.xanchor: 2.261e-04 -> 0
+  s1 f=0 after initial-COM_links.grad               ->  f=0 after initial-UCS+FV.grad (end)            joints_state.xaxis: 8.742e-09 -> 0
+
+=== links_state.cd_vel (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       7.538e-07
+  s1 f=0 entry                                      7.538e-07
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       1.508e-06
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== links_state.cd_ang (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       2.378e-07
+  s1 f=0 entry                                      2.378e-07
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       4.755e-07
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.cdof_vel (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       1.068e-04
+  s1 f=0 entry                                      1.068e-04
+  s1 f=0 after post-fwd_velocity.grad               1.068e-04
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       2.261e-04
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.cdof_ang (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       7.829e-06
+  s1 f=0 entry                                      7.829e-06
+  s1 f=0 after post-fwd_velocity.grad               7.829e-06
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       2.111e-05
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.cdofd_vel (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       1.131e-06
+  s1 f=0 entry                                      1.131e-06
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       2.261e-06
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.cdofd_ang (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       7.336e-11
+  s1 f=0 entry                                      7.336e-11
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       1.440e-10
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== links_state.cfrc_vel (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== links_state.cfrc_ang (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== links_state.cinr_inertial (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       5.165e-08
+  s1 f=0 entry                                      5.165e-08
+  s1 f=0 after post-fwd_velocity.grad               5.165e-08
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       8.681e-08
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== links_state.crb_inertial (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== rigid_global_info.mass_mat (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    1.150e-04
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    1.701e-04
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== rigid_global_info.mass_mat_L (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.acc_smooth (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    0.000e+00
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    0.000e+00
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.acc_smooth_bw (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    3.999e-05
+  s0 f=0 after fwd_dynamics_without_qacc.grad       3.999e-05
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    7.998e-05
+  s1 f=0 after fwd_dynamics_without_qacc.grad       7.998e-05
+  s1 f=0 after initial-COM_links.grad               7.998e-05
+  s1 f=0 after initial-UCS+FV.grad (end)            7.998e-05
+
+=== dofs_state.force (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          0.000e+00
+  s0 f=0 after compute_qacc.grad                    2.666e-05
+  s0 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 entry                                      0.000e+00
+  s1 f=0 after post-fwd_velocity.grad               0.000e+00
+  s1 f=0 after post-COM_links.grad                  0.000e+00
+  s1 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          0.000e+00
+  s1 f=0 after compute_qacc.grad                    5.332e-05
+  s1 f=0 after fwd_dynamics_without_qacc.grad       0.000e+00
+  s1 f=0 after initial-COM_links.grad               0.000e+00
+  s1 f=0 after initial-UCS+FV.grad (end)            0.000e+00
+
+=== dofs_state.vel (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     0.000e+00
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          3.999e-03
+  s0 f=0 after compute_qacc.grad                    3.999e-03
+  s0 f=0 after fwd_dynamics_without_qacc.grad       3.999e-03
+  s1 f=0 entry                                      3.999e-03
+  s1 f=0 after post-fwd_velocity.grad               3.999e-03
+  s1 f=0 after post-COM_links.grad                  3.999e-03
+  s1 f=0 after post-update_cartesian_space.grad     3.999e-03
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          7.998e-03
+  s1 f=0 after compute_qacc.grad                    7.998e-03
+  s1 f=0 after fwd_dynamics_without_qacc.grad       7.998e-03
+  s1 f=0 after initial-COM_links.grad               7.998e-03
+  s1 f=0 after initial-UCS+FV.grad (end)            7.998e-03
+
+=== rigid_global_info.qpos (max-abs of .grad across stages) ===
+  s0 f=0 entry                                      0.000e+00
+  s0 f=0 after post-fwd_velocity.grad               0.000e+00
+  s0 f=0 after post-COM_links.grad                  0.000e+00
+  s0 f=0 after post-update_cartesian_space.grad     3.999e-01
+  s0 f=0 after begin_backward_substep               0.000e+00
+  s0 f=0 after step_2.grad                          3.999e-01
+  s0 f=0 after compute_qacc.grad                    3.999e-01
+  s0 f=0 after fwd_dynamics_without_qacc.grad       3.999e-01
+  s1 f=0 entry                                      3.999e-01
+  s1 f=0 after post-fwd_velocity.grad               3.999e-01
+  s1 f=0 after post-COM_links.grad                  3.999e-01
+  s1 f=0 after post-update_cartesian_space.grad     3.999e-01
+  s1 f=0 after begin_backward_substep               0.000e+00
+  s1 f=0 after step_2.grad                          3.999e-01
+  s1 f=0 after compute_qacc.grad                    3.999e-01
+  s1 f=0 after fwd_dynamics_without_qacc.grad       3.999e-01
+  s1 f=0 after initial-COM_links.grad               3.999e-01
+  s1 f=0 after initial-UCS+FV.grad (end)            3.999e-01
