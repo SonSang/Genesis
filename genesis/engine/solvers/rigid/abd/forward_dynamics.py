@@ -1377,17 +1377,25 @@ def kernel_forward_dynamics_without_qacc(
     contact_island_state: array_class.ContactIslandState,
     is_backward: qd.template(),
 ):
-    # `func_compute_mass_matrix` and `func_factor_mass` are intentionally
-    # omitted here so that this kernel's auto-generated `.grad` (invoked
-    # during backward) does not try to differentiate them. Their reverses
-    # are either rejected by Quadrants AD (mixed for-loops + statements in
-    # `func_compute_mass_matrix`) or no longer needed (the LDLT chain is
-    # handled directly by `kernel_manual_compute_qacc_bw` via IFT, seeding
-    # `mass_mat.grad` without going through `mass_mat_L.grad` /
-    # `mass_mat_D_inv.grad`). The forward primals of `mass_mat` /
-    # `mass_mat_L` / `mass_mat_D_inv` are still produced upstream — by
-    # `kernel_step_1 → func_forward_dynamics` during the forward replay
-    # inside `self.substep(f)` — so the .grad call here can rely on them.
+    # `func_factor_mass` is intentionally omitted here — its reverse is
+    # not needed because `kernel_manual_compute_qacc_bw` seeds
+    # `mass_mat.grad` directly via IFT, bypassing the
+    # `mass_mat_L.grad` / `mass_mat_D_inv.grad` chain. `func_compute_mass_matrix`
+    # IS included so Quadrants AD can auto-reverse the
+    # `mass_mat → cdof_*, f_ang/vel, crb_*, cinr_*, links_state.{pos,quat}` chain
+    # (each of its inner blocks is a clean top-level ndrange with no
+    # standalone statements, so the `reverse_segments` analysis accepts it).
+    func_compute_mass_matrix(
+        implicit_damping=qd.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
+        links_state=links_state,
+        links_info=links_info,
+        dofs_state=dofs_state,
+        dofs_info=dofs_info,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
     func_torque_and_passive_force(
         entities_state=entities_state,
         entities_info=entities_info,
