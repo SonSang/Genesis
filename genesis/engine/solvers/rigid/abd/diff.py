@@ -358,13 +358,16 @@ def kernel_copy_next_to_curr_no_check(
     # builds the FK Jacobian around the actual rotation, not the pre-integrate identity quat
     # that `func_load_adjoint_cache` left behind (this is what caused J4 chain attenuation
     # on the freejoint angular DOFs).
+    #
+    # NOTE (vel copy removed): the comment above documents only the qpos copy intent. The
+    # vel copy was a side-effect that made `kernel_forward_velocity_one_link` (called right
+    # after this kernel) read post-integrate vel (state[t+1].vel) as its primal. But
+    # forward_velocity's correct primal at step t is the *pre-integrate* vel
+    # (state[t].vel — the integrator's INPUT, not OUTPUT). Keeping vel at pre-integrate
+    # fixes stage 14 vel.grad wrong on J4 N=2 (see notes/diffrigid_handoff_fwd_velocity_wrong_source.md).
     n_qs = rigid_global_info.qpos.shape[0]
-    n_dofs = dofs_state.vel.shape[0]
     _B = dofs_state.vel.shape[1]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in qd.ndrange(n_dofs, _B):
-        dofs_state.vel[i_d, i_b] = dofs_state.vel_next[i_d, i_b]
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_q, i_b in qd.ndrange(n_qs, _B):
         rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
