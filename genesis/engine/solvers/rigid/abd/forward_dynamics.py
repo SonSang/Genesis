@@ -1362,6 +1362,137 @@ def func_integrate(
                                 )
 
 
+# =========================================================================
+# Step 5 split: per-sub-func kernel wrappers for `func_forward_dynamics`
+# (without compute_qacc and factor_mass). Splitting these out of the
+# monolithic `kernel_forward_dynamics_without_qacc` lets Quadrants AD
+# process each sub-func's reverse pass in isolation, breaking cross-
+# sub-func same-buffer .grad interactions that silently drop chain
+# contributions when run inside a single kernel.
+#
+# See notes/diffrigid_handoff_j4_n2_fwd_velocity_suspect.md for the
+# motivation (J4 N=2 cinr_pos.grad wrong source). Standalone Quadrants
+# verification confirmed each sub-func's chain rule is correct in
+# isolation; the wrongness only appears when they're inlined into a
+# single kernel.
+# =========================================================================
+
+
+@qd.kernel
+def kernel_split_compute_mass_matrix(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_compute_mass_matrix(
+        implicit_damping=qd.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
+        links_state=links_state,
+        links_info=links_info,
+        dofs_state=dofs_state,
+        dofs_info=dofs_info,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
+@qd.kernel
+def kernel_split_torque_and_passive_force(
+    entities_state: array_class.EntitiesState,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    geoms_state: array_class.GeomsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    contact_island_state: array_class.ContactIslandState,
+    is_backward: qd.template(),
+):
+    func_torque_and_passive_force(
+        entities_state=entities_state,
+        entities_info=entities_info,
+        dofs_state=dofs_state,
+        dofs_info=dofs_info,
+        links_state=links_state,
+        links_info=links_info,
+        joints_info=joints_info,
+        geoms_state=geoms_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        contact_island_state=contact_island_state,
+        is_backward=is_backward,
+    )
+
+
+@qd.kernel
+def kernel_split_update_acc(
+    dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_update_acc(
+        update_cacc=False,
+        dofs_state=dofs_state,
+        links_info=links_info,
+        links_state=links_state,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
+@qd.kernel
+def kernel_split_update_force(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_update_force(
+        links_state=links_state,
+        links_info=links_info,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
+@qd.kernel
+def kernel_split_bias_force(
+    dofs_state: array_class.DofsState,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_bias_force(
+        dofs_state=dofs_state,
+        links_state=links_state,
+        links_info=links_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
 @qd.kernel
 def kernel_forward_dynamics_without_qacc(
     links_state: array_class.LinksState,

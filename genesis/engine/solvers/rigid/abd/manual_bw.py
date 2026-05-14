@@ -497,3 +497,238 @@ def kernel_manual_uc_bw_one_link(
             # All joint types covered: FREE / REVOLUTE / PRISMATIC / FIXED
             # produce the correct backward chain. SPHERICAL flips an errno
             # bit (caller must check + raise).
+
+
+# =========================================================================
+# Manual reverse for `func_update_force` (Step 5 sub-3).
+#
+# Forward (per-link, `genesis/.../forward_dynamics.py:1023`):
+#   f1_ang, f1_vel = inertial_mul(cinr_pos, cinr_inertial, cinr_mass, cdd_v, cdd_a)
+#   f2_ang, f2_vel = inertial_mul(cinr_pos, cinr_inertial, cinr_mass, cd_v, cd_a)
+#   f3_ang, f3_vel = motion_cross_force(cd_ang, cd_vel, f2_ang, f2_vel)
+#   cfrc_vel[i_l] = f1_vel + f3_vel + cfrc_applied_vel[i_l] + cfrc_coupling_vel[i_l]
+#   cfrc_ang[i_l] = f1_ang + f3_ang + cfrc_applied_ang[i_l] + cfrc_coupling_ang[i_l]
+# Then tree aggregation (leaf → root):
+#   for i_l_ in range(n_links_in_entity):
+#       i_l = link_end - 1 - i_l_
+#       if parent_idx[i_l] != -1:
+#           cfrc_vel[parent] += cfrc_vel[i_l]
+#           cfrc_ang[parent] += cfrc_ang[i_l]
+# Then clear coupling forces:
+#   cfrc_coupling_{ang,vel} = 0
+#
+# Reverse (processed in statement-reverse order):
+# 1. Clear coupling reverse — no-op for upstream grad (forward set to 0).
+# 2. Tree aggregation reverse (root → leaf): cfrc[i_l].grad += cfrc[parent].grad
+# 3. Per-link reverse of f1+f2+f3+applied+coupling chain.
+#
+# Scope: single-entity-batch (no hibernation). batch_links_info NOT supported (J4 has it False).
+# =========================================================================
+
+
+@qd.func
+def d_motion_cross_force(m_ang, m_vel, f_ang, f_vel, ang_g, vel_g):
+    """Reverse of motion_cross_force(m_ang, m_vel, f_ang, f_vel).
+
+    Forward (geom.py:430):
+        vel = m_ang × f_vel
+        ang = m_ang × f_ang + m_vel × f_vel
+
+    Chain rule (using c=a×b ⇒ a.g += b × c.g, b.g += c.g × a):
+        m_ang.g += f_vel × vel.g  +  f_ang × ang.g
+        m_vel.g += f_vel × ang.g
+        f_ang.g += ang.g × m_ang
+        f_vel.g += vel.g × m_ang  +  ang.g × m_vel
+
+    Returns (m_ang_g, m_vel_g, f_ang_g, f_vel_g) — additive deltas to inputs.
+    """
+    return (
+        f_vel.cross(vel_g) + f_ang.cross(ang_g),
+        f_vel.cross(ang_g),
+        ang_g.cross(m_ang),
+        vel_g.cross(m_ang) + ang_g.cross(m_vel),
+    )
+
+
+@qd.func
+def d_inertial_mul(pos, I_mat, mass, vel, ang, ang_g, vel_g):
+    """Reverse of inertial_mul(pos, I, mass, vel, ang).
+
+    Forward (geom.py:423):
+        _ang = I @ ang + pos × vel
+        _vel = mass * vel - pos × ang
+
+    Chain rule:
+        I.g     += outer(_ang.g, ang)
+        ang.g   += I.T @ _ang.g + pos × _vel.g
+        pos.g   += vel × _ang.g - (ang × _vel.g)
+        vel.g   += mass * _vel.g + _ang.g × pos
+        mass.g  += vel · _vel.g
+    """
+    pos_g = vel.cross(ang_g) - ang.cross(vel_g)
+    I_g = ang_g.outer_product(ang)  # 3x3 matrix
+    ang_out_g = I_mat.transpose() @ ang_g + pos.cross(vel_g)
+    vel_out_g = mass * vel_g + ang_g.cross(pos)
+    mass_g = vel.dot(vel_g)
+    return pos_g, I_g, mass_g, vel_out_g, ang_out_g
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_update_force_bw(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    errno: qd.Tensor,
+):
+    """Manual backward replacement for `kernel_split_update_force.grad`.
+
+    Bypasses the auto-AD reverse pass which (when run inside the monolithic
+    `kernel_forward_dynamics_without_qacc.grad`) silently drops chain
+    contributions to cinr_pos.grad / cd_v.grad / cd_a.grad — see
+    `notes/diffrigid_handoff_j4_n2_fwd_velocity_suspect.md` and
+    `/tmp/diag_fine_zero.py` (cinr_pos zero-out → max rel reduction by 2.66
+    of baseline 6.97 on J4 N=2).
+
+    Reads from links_state grads as inputs, writes the chain rule outputs
+    into the input field grads (cd_v/cd_a/cdd_v/cdd_a/cinr_*/cfrc_applied_*/
+    cfrc_coupling_*.grad). Per guide P8: consumes cfrc_vel/cfrc_ang.grad
+    (zeros them after).
+
+    Hibernation NOT supported — would require iteration over awake_entities/
+    awake_links; raise errno bit if encountered.
+    """
+    qd.loop_config(
+        name="manual_update_force_bw",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_b in range(links_state.pos.shape[1]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            # P9: hibernation not implemented in this manual reverse. Flip errno.
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+        else:
+            # =================== Step 1: tree-aggregation reverse ===================
+            # Forward: for i_l_ in range(n_links_in_entity):
+            #            i_l = link_end - 1 - i_l_       (leaf → root)
+            #            if parent != -1: cfrc[parent] += cfrc[i_l]
+            # Reverse: iterate the SAME order so child's parent.grad
+            # contribution is added to child BEFORE child is itself used as a
+            # parent of its descendants. (Equivalent to iterating in root→leaf
+            # order — since 'leaf to root' forward means 'root assigned last',
+            # statement-reverse means 'root first'.)
+            # We iterate i_l_ from 0 to n_links-1, which gives leaf→root order
+            # (same as forward) — since each statement is independent in its
+            # write (cfrc[parent] += cfrc[i_l]), reverse order of statements
+            # is i_l_ from n-1 down to 0. That's root → leaf.
+            # In statement-reverse: cfrc[i_l].grad += cfrc[parent].grad. For
+            # a tree with root at i_l_root, we need to propagate root's grad
+            # to its children, then each child propagates to its grandchildren.
+            # ROOT → LEAF iteration achieves this. For J4 (chassis=0 root,
+            # arm=1 child of chassis), iterating from arm(i_l_=0, i_l=1) up
+            # to chassis(i_l_=1, i_l=0) in REVERSE means: i_l_=1 first (chassis,
+            # parent=-1, skip), then i_l_=0 (arm, parent=0, cfrc[1].grad += cfrc[0].grad).
+            for i_e in range(entities_info.n_links.shape[0]):
+                n_in_e = entities_info.n_links[i_e]
+                # Reverse the forward loop order: forward goes i_l_ = 0..n-1,
+                # reverse goes i_l_ = n-1..0. Statement is "cfrc[parent] += cfrc[i_l]"
+                # → reverse statement "cfrc[i_l].grad += cfrc[parent].grad".
+                for i_l_rev in range(n_in_e):
+                    # forward index i_l_ = n-1 - i_l_rev  ⇒ i_l = link_end - 1 - i_l_ = link_start + i_l_rev
+                    i_l = entities_info.link_start[i_e] + i_l_rev
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    i_p = links_info.parent_idx[I_l]
+                    if i_p != -1:
+                        for k in qd.static(range(3)):
+                            links_state.cfrc_vel.grad[i_l, i_b][k] = (
+                                links_state.cfrc_vel.grad[i_l, i_b][k] + links_state.cfrc_vel.grad[i_p, i_b][k]
+                            )
+                            links_state.cfrc_ang.grad[i_l, i_b][k] = (
+                                links_state.cfrc_ang.grad[i_l, i_b][k] + links_state.cfrc_ang.grad[i_p, i_b][k]
+                            )
+
+            # =================== Step 2: per-link first-loop reverse ===================
+            for i_e in range(entities_info.n_links.shape[0]):
+                for i_l_ in range(entities_info.n_links[i_e]):
+                    i_l = entities_info.link_start[i_e] + i_l_
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+                    cfrc_v_g = links_state.cfrc_vel.grad[i_l, i_b]
+                    cfrc_a_g = links_state.cfrc_ang.grad[i_l, i_b]
+
+                    # Forward additions distributing cfrc.grad evenly:
+                    # f1_v_g = f3_v_g = cfrc_applied_v_g = cfrc_coupling_v_g = cfrc_v_g
+                    # (same for ang)
+                    # Accumulate into applied / coupling
+                    for k in qd.static(range(3)):
+                        links_state.cfrc_applied_vel.grad[i_l, i_b][k] = (
+                            links_state.cfrc_applied_vel.grad[i_l, i_b][k] + cfrc_v_g[k]
+                        )
+                        links_state.cfrc_applied_ang.grad[i_l, i_b][k] = (
+                            links_state.cfrc_applied_ang.grad[i_l, i_b][k] + cfrc_a_g[k]
+                        )
+                        links_state.cfrc_coupling_vel.grad[i_l, i_b][k] = (
+                            links_state.cfrc_coupling_vel.grad[i_l, i_b][k] + cfrc_v_g[k]
+                        )
+                        links_state.cfrc_coupling_ang.grad[i_l, i_b][k] = (
+                            links_state.cfrc_coupling_ang.grad[i_l, i_b][k] + cfrc_a_g[k]
+                        )
+
+                    # Read forward primal
+                    cinr_pos = links_state.cinr_pos[i_l, i_b]
+                    cinr_I = links_state.cinr_inertial[i_l, i_b]
+                    cinr_m = links_state.cinr_mass[i_l, i_b]
+                    cd_v = links_state.cd_vel[i_l, i_b]
+                    cd_a = links_state.cd_ang[i_l, i_b]
+                    cdd_v = links_state.cdd_vel[i_l, i_b]
+                    cdd_a = links_state.cdd_ang[i_l, i_b]
+
+                    # Reverse f3 = motion_cross_force(cd_a, cd_v, f2_ang, f2_vel)
+                    # We need f2 = inertial_mul(cinr_pos, cinr_I, cinr_m, cd_v, cd_a)
+                    f2_a = cinr_I @ cd_a + cinr_pos.cross(cd_v)
+                    f2_v = cinr_m * cd_v - cinr_pos.cross(cd_a)
+                    (m_ang_g, m_vel_g, f2_a_g, f2_v_g) = d_motion_cross_force(
+                        cd_a, cd_v, f2_a, f2_v, cfrc_a_g, cfrc_v_g
+                    )
+                    # m_ang corresponds to cd_a; m_vel to cd_v
+                    for k in qd.static(range(3)):
+                        links_state.cd_ang.grad[i_l, i_b][k] = links_state.cd_ang.grad[i_l, i_b][k] + m_ang_g[k]
+                        links_state.cd_vel.grad[i_l, i_b][k] = links_state.cd_vel.grad[i_l, i_b][k] + m_vel_g[k]
+
+                    # Reverse f2 = inertial_mul(cinr_pos, cinr_I, cinr_m, cd_v, cd_a)
+                    # Note: ang_g for this is f2_a_g, vel_g is f2_v_g
+                    # Returns (pos_g, I_g, mass_g, vel_out_g, ang_out_g)
+                    f2_pos_g, f2_I_g, f2_m_g, f2_cd_v_step_g, f2_cd_a_step_g = d_inertial_mul(
+                        cinr_pos, cinr_I, cinr_m, cd_v, cd_a, f2_a_g, f2_v_g
+                    )
+                    for k in qd.static(range(3)):
+                        links_state.cinr_pos.grad[i_l, i_b][k] = links_state.cinr_pos.grad[i_l, i_b][k] + f2_pos_g[k]
+                        links_state.cd_vel.grad[i_l, i_b][k] = links_state.cd_vel.grad[i_l, i_b][k] + f2_cd_v_step_g[k]
+                        links_state.cd_ang.grad[i_l, i_b][k] = links_state.cd_ang.grad[i_l, i_b][k] + f2_cd_a_step_g[k]
+                    for r in qd.static(range(3)):
+                        for c in qd.static(range(3)):
+                            links_state.cinr_inertial.grad[i_l, i_b][r, c] = (
+                                links_state.cinr_inertial.grad[i_l, i_b][r, c] + f2_I_g[r, c]
+                            )
+                    links_state.cinr_mass.grad[i_l, i_b] = links_state.cinr_mass.grad[i_l, i_b] + f2_m_g
+
+                    # Reverse f1 = inertial_mul(cinr_pos, cinr_I, cinr_m, cdd_v, cdd_a)
+                    # ang_g = cfrc_a_g, vel_g = cfrc_v_g (from f1_*_g)
+                    f1_pos_g, f1_I_g, f1_m_g, f1_cdd_v_g, f1_cdd_a_g = d_inertial_mul(
+                        cinr_pos, cinr_I, cinr_m, cdd_v, cdd_a, cfrc_a_g, cfrc_v_g
+                    )
+                    for k in qd.static(range(3)):
+                        links_state.cinr_pos.grad[i_l, i_b][k] = links_state.cinr_pos.grad[i_l, i_b][k] + f1_pos_g[k]
+                        links_state.cdd_vel.grad[i_l, i_b][k] = links_state.cdd_vel.grad[i_l, i_b][k] + f1_cdd_v_g[k]
+                        links_state.cdd_ang.grad[i_l, i_b][k] = links_state.cdd_ang.grad[i_l, i_b][k] + f1_cdd_a_g[k]
+                    for r in qd.static(range(3)):
+                        for c in qd.static(range(3)):
+                            links_state.cinr_inertial.grad[i_l, i_b][r, c] = (
+                                links_state.cinr_inertial.grad[i_l, i_b][r, c] + f1_I_g[r, c]
+                            )
+                    links_state.cinr_mass.grad[i_l, i_b] = links_state.cinr_mass.grad[i_l, i_b] + f1_m_g
+
+                    # Per guide P8: zero consumed cfrc.grad
+                    for k in qd.static(range(3)):
+                        links_state.cfrc_vel.grad[i_l, i_b][k] = 0.0
+                        links_state.cfrc_ang.grad[i_l, i_b][k] = 0.0
