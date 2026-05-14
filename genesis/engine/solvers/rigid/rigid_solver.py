@@ -122,6 +122,12 @@ from .abd.forward_dynamics import (
     kernel_split_update_acc,
     kernel_split_update_force,
     kernel_split_bias_force,
+    kernel_mm_crb_initialize,
+    kernel_mm_crb_aggregate,
+    kernel_mm_compute_f,
+    kernel_mm_assemble,
+    kernel_mm_armature,
+    kernel_mm_implicit_damping_corr,
     update_qacc_from_qvel_delta,
     update_qvel,
 )
@@ -1749,15 +1755,49 @@ class RigidSolver(KinematicSolver):
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=True,
         )
-        kernel_split_compute_mass_matrix.grad(
+        # Step 5 sub-4: split compute_mass_matrix.grad into per-sub-block reverse
+        # to localize the 50%-rel-err contribution observed when its monolithic
+        # .grad was skipped. Reverse order: impint_corr → armature → assemble →
+        # compute_f → crb_aggregate → crb_initialize.
+        if self._integrator == gs.integrator.approximate_implicitfast:
+            kernel_mm_implicit_damping_corr.grad(
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+        kernel_mm_armature.grad(
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            is_backward=True,
+        )
+        kernel_mm_assemble.grad(
+            dofs_state=self.dofs_state,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        kernel_mm_compute_f.grad(
             links_state=self.links_state,
             links_info=self.links_info,
             dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        kernel_mm_crb_aggregate.grad(
+            links_state=self.links_state,
+            links_info=self.links_info,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             is_backward=True,
+        )
+        kernel_mm_crb_initialize.grad(
+            links_state=self.links_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self._debug_grad_dump(f"f={f} after fwd_dynamics_without_qacc.grad")
 

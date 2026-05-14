@@ -1402,6 +1402,276 @@ def kernel_split_compute_mass_matrix(
     )
 
 
+# =========================================================================
+# Step 5 sub-4: per-sub-block split of `func_compute_mass_matrix`.
+#
+# The skip test (commit c4c33e33) localized 50% of J4 N=2 rel err to this
+# function. To narrow which of its 6 sub-blocks is the wrong-grad source,
+# each sub-block is wrapped in its own kernel so Quadrants AD can be
+# probed sub-block-by-sub-block (split forward replay automatic via .grad).
+#
+# Forward sub-blocks (mirror lines 287-430 of func_compute_mass_matrix):
+#   1. crb_initialize         — crb_* ← cinr_*  (simple copy)
+#   2. crb_aggregate          — tree: crb[parent] += crb[i_l]  (per entity)
+#   3. compute_f              — f_ang/f_vel = inertial_mul(crb, cdof)  (per DOF)
+#   4. assemble               — mass_mat[i,j] = f.dot(cdof) + symm copy
+#   5. armature               — mass_mat[i,i] += armature
+#   6. implicit_damping_corr  — mass_mat[i,i] += damping + (vel-mode act_bias)
+# =========================================================================
+
+
+@qd.func
+def func_mm_crb_initialize(
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(name="crb_initialize", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_0, i_b in (
+        qd.ndrange(1, links_state.pos.shape[1])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(links_state.pos.shape[0], links_state.pos.shape[1])
+    ):
+        for i_1 in (
+            range(rigid_global_info.n_awake_links[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.static(range(1))
+        ):
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_l = (
+                    rigid_global_info.awake_links[i_1, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                links_state.crb_inertial[i_l, i_b] = links_state.cinr_inertial[i_l, i_b]
+                links_state.crb_pos[i_l, i_b] = links_state.cinr_pos[i_l, i_b]
+                links_state.crb_quat[i_l, i_b] = links_state.cinr_quat[i_l, i_b]
+                links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
+
+
+@qd.func
+def func_mm_crb_aggregate(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    BW = qd.static(is_backward)
+    qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_0, i_b in (
+        qd.ndrange(1, links_state.pos.shape[1])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1])
+    ):
+        for i_1 in (
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.static(range(1))
+        ):
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_1, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                for i in range(entities_info.n_links[i_e]):
+                    i_l = entities_info.link_end[i_e] - 1 - i
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    i_p = links_info.parent_idx[I_l]
+                    I_p = [i_p, i_b]
+                    if i_p != -1:
+                        func_add_safe_backward(links_state.crb_inertial, I_p, links_state.crb_inertial[i_l, i_b], BW)
+                        func_add_safe_backward(links_state.crb_mass, I_p, links_state.crb_mass[i_l, i_b], BW)
+                        func_add_safe_backward(links_state.crb_pos, I_p, links_state.crb_pos[i_l, i_b], BW)
+                        func_add_safe_backward(links_state.crb_quat, I_p, links_state.crb_quat[i_l, i_b], BW)
+
+
+@qd.func
+def func_mm_compute_f(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(name="mass_mat", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_0, i_b in (
+        qd.ndrange(1, links_state.pos.shape[1])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(links_state.pos.shape[0], links_state.pos.shape[1])
+    ):
+        for i_1 in (
+            range(rigid_global_info.n_awake_links[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.static(range(1))
+        ):
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_l = (
+                    rigid_global_info.awake_links[i_1, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                for i_d in range(links_info.dof_start[I_l], links_info.dof_end[I_l]):
+                    dofs_state.f_ang[i_d, i_b], dofs_state.f_vel[i_d, i_b] = gu.inertial_mul(
+                        links_state.crb_pos[i_l, i_b],
+                        links_state.crb_inertial[i_l, i_b],
+                        links_state.crb_mass[i_l, i_b],
+                        dofs_state.cdof_vel[i_d, i_b],
+                        dofs_state.cdof_ang[i_d, i_b],
+                    )
+
+
+@qd.func
+def func_mm_assemble(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(
+        name="mass_mat_assemble", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    )
+    for i_0, i_b in (
+        qd.ndrange(1, dofs_state.f_ang.shape[1])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(entities_info.n_links.shape[0], dofs_state.f_ang.shape[1])
+    ):
+        for i_1 in (
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.static(range(1))
+        ):
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_1, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                for i_d, j_d in qd.ndrange(
+                    (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                    (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                ):
+                    rigid_global_info.mass_mat[i_d, j_d, i_b] = (
+                        dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
+                        + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
+                    ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+
+                for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                    for j_d in range(i_d + 1, entities_info.dof_end[i_e]):
+                        rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+
+
+@qd.func
+def func_mm_armature(
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    BW = qd.static(is_backward)
+    qd.loop_config(name="armature", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], dofs_state.f_ang.shape[1]):
+        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+        func_add_safe_backward(rigid_global_info.mass_mat, (i_d, i_d, i_b), dofs_info.armature[I_d], BW)
+
+
+@qd.func
+def func_mm_implicit_damping_corr(
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(name="impint_order_1_corr", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], dofs_state.f_ang.shape[1]):
+        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+        rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+            rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+        )
+        if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
+            rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+                rigid_global_info.mass_mat[i_d, i_d, i_b]
+                - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
+            )
+
+
+@qd.kernel
+def kernel_mm_crb_initialize(
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    func_mm_crb_initialize(links_state, rigid_global_info, static_rigid_sim_config)
+
+
+@qd.kernel
+def kernel_mm_crb_aggregate(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_mm_crb_aggregate(
+        links_state, links_info, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
+    )
+
+
+@qd.kernel
+def kernel_mm_compute_f(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    func_mm_compute_f(links_state, links_info, dofs_state, rigid_global_info, static_rigid_sim_config)
+
+
+@qd.kernel
+def kernel_mm_assemble(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    func_mm_assemble(dofs_state, entities_info, rigid_global_info, static_rigid_sim_config)
+
+
+@qd.kernel
+def kernel_mm_armature(
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_mm_armature(dofs_state, dofs_info, rigid_global_info, static_rigid_sim_config, is_backward)
+
+
+@qd.kernel
+def kernel_mm_implicit_damping_corr(
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    func_mm_implicit_damping_corr(dofs_state, dofs_info, rigid_global_info, static_rigid_sim_config)
+
+
 @qd.kernel
 def kernel_split_torque_and_passive_force(
     entities_state: array_class.EntitiesState,
