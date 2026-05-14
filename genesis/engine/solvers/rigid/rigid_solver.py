@@ -190,6 +190,8 @@ from .abd.diff import (
 from .abd.manual_bw import (
     kernel_manual_uc_bw_one_link,
     kernel_manual_update_force_bw,
+    kernel_manual_mm_assemble_bw,
+    kernel_manual_mm_crb_aggregate_bw,
 )
 
 if TYPE_CHECKING:
@@ -1773,11 +1775,12 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config=self._static_rigid_sim_config,
             is_backward=True,
         )
-        kernel_mm_assemble.grad(
+        kernel_manual_mm_assemble_bw(
             dofs_state=self.dofs_state,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            errno=self._errno,
         )
         kernel_mm_compute_f.grad(
             links_state=self.links_state,
@@ -1786,13 +1789,13 @@ class RigidSolver(KinematicSolver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-        kernel_mm_crb_aggregate.grad(
+        kernel_manual_mm_crb_aggregate_bw(
             links_state=self.links_state,
             links_info=self.links_info,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
+            errno=self._errno,
         )
         kernel_mm_crb_initialize.grad(
             links_state=self.links_state,

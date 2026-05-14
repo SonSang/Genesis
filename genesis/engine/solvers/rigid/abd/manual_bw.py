@@ -732,3 +732,149 @@ def kernel_manual_update_force_bw(
                     for k in qd.static(range(3)):
                         links_state.cfrc_vel.grad[i_l, i_b][k] = 0.0
                         links_state.cfrc_ang.grad[i_l, i_b][k] = 0.0
+
+
+# =========================================================================
+# Manual reverses for compute_mass_matrix sub-blocks (Step 5 sub-6).
+#
+# Hypothesis (from stage dump): the auto-AD reverse of kernel_mm_assemble or
+# kernel_mm_crb_aggregate may silently drop or otherwise miscompute the
+# mass_mat → f → cdof and crb tree chain rules. Replace them with explicit
+# manual chain rule kernels to see whether J4 N=2 rel err changes.
+# =========================================================================
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_mm_assemble_bw(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    errno: qd.Tensor,
+):
+    """Manual reverse for func_mm_assemble.
+
+    Forward (per entity, per (i_d, j_d) ∈ [dof_start, dof_end)²):
+      val = f_ang[i_d].dot(cdof_ang[j_d]) + f_vel[i_d].dot(cdof_vel[j_d])
+      mass_mat[i_d, j_d] = val * mass_parent_mask[i_d, j_d]
+    Then symmetric copy for upper triangle:
+      for i_d:
+        for j_d in (i_d+1, dof_end):
+          mass_mat[i_d, j_d] = mass_mat[j_d, i_d]   ← OVERWRITES the dot-product result
+
+    Reverse (statement-reverse order):
+      1) Symmetric copy reverse:
+         mass_mat[j_d, i_d].grad += mass_mat[i_d, j_d].grad
+         mass_mat[i_d, j_d].grad = 0     (P8 — the dot-product output was overwritten by symm copy)
+      2) f.dot(cdof) loop reverse:
+         val_grad = mass_mat[i_d, j_d].grad * mass_parent_mask[i_d, j_d]
+         f_ang[i_d].grad   += val_grad * cdof_ang[j_d]
+         cdof_ang[j_d].grad += val_grad * f_ang[i_d]
+         f_vel[i_d].grad   += val_grad * cdof_vel[j_d]
+         cdof_vel[j_d].grad += val_grad * f_vel[i_d]
+      3) mass_mat[i_d, j_d].grad = 0 (P8, consumed)
+    """
+    qd.loop_config(
+        name="manual_mm_assemble_bw",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.f_ang.shape[1]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+        else:
+            d_start = entities_info.dof_start[i_e]
+            d_end = entities_info.dof_end[i_e]
+
+            # =========== Step 1: reverse symmetric copy =================
+            # Forward iterated i_d ∈ [d_start, d_end), j_d ∈ (i_d+1, d_end).
+            # Reverse iterates same statements in reverse order.
+            for i_d in range(d_start, d_end):
+                for j_d in range(i_d + 1, d_end):
+                    # forward: mass_mat[i_d, j_d] = mass_mat[j_d, i_d]
+                    # reverse: mass_mat[j_d, i_d].grad += mass_mat[i_d, j_d].grad
+                    rigid_global_info.mass_mat.grad[j_d, i_d, i_b] = (
+                        rigid_global_info.mass_mat.grad[j_d, i_d, i_b] + rigid_global_info.mass_mat.grad[i_d, j_d, i_b]
+                    )
+                    rigid_global_info.mass_mat.grad[i_d, j_d, i_b] = 0.0
+
+            # =========== Step 2: reverse f.dot(cdof) chain ===============
+            for i_d, j_d in qd.ndrange((d_start, d_end), (d_start, d_end)):
+                val_grad = rigid_global_info.mass_mat.grad[i_d, j_d, i_b] * rigid_global_info.mass_parent_mask[i_d, j_d]
+                f_ang_i = dofs_state.f_ang[i_d, i_b]
+                f_vel_i = dofs_state.f_vel[i_d, i_b]
+                cdof_ang_j = dofs_state.cdof_ang[j_d, i_b]
+                cdof_vel_j = dofs_state.cdof_vel[j_d, i_b]
+                for k in qd.static(range(3)):
+                    dofs_state.f_ang.grad[i_d, i_b][k] = dofs_state.f_ang.grad[i_d, i_b][k] + val_grad * cdof_ang_j[k]
+                    dofs_state.cdof_ang.grad[j_d, i_b][k] = (
+                        dofs_state.cdof_ang.grad[j_d, i_b][k] + val_grad * f_ang_i[k]
+                    )
+                    dofs_state.f_vel.grad[i_d, i_b][k] = dofs_state.f_vel.grad[i_d, i_b][k] + val_grad * cdof_vel_j[k]
+                    dofs_state.cdof_vel.grad[j_d, i_b][k] = (
+                        dofs_state.cdof_vel.grad[j_d, i_b][k] + val_grad * f_vel_i[k]
+                    )
+
+            # =========== Step 3: P8 — zero consumed mass_mat.grad ==============
+            for i_d, j_d in qd.ndrange((d_start, d_end), (d_start, d_end)):
+                rigid_global_info.mass_mat.grad[i_d, j_d, i_b] = 0.0
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_mm_crb_aggregate_bw(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    errno: qd.Tensor,
+):
+    """Manual reverse for func_mm_crb_aggregate.
+
+    Forward (per entity, iterating i from 0 to n_links-1):
+      i_l = link_end - 1 - i              (leaf → root)
+      if parent != -1:
+        crb_inertial[parent] += crb_inertial[i_l]
+        crb_mass[parent]     += crb_mass[i_l]
+        crb_pos[parent]      += crb_pos[i_l]
+        crb_quat[parent]     += crb_quat[i_l]
+
+    Reverse: each `X[parent] += X[i_l]` statement reverses to
+    `X[i_l].grad += X[parent].grad`. Iterate root → leaf (= REVERSE forward
+    order) so a parent's accumulated grad propagates to its children before
+    those children are themselves used as parents.
+
+    Iteration order: i in [n_links-1, n_links-2, ..., 0] in forward →
+    i in [0, 1, ..., n_links-1] in reverse → i_l from link_start up to
+    link_end-1.
+    """
+    qd.loop_config(
+        name="manual_mm_crb_aggregate_bw",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+        else:
+            n_in_e = entities_info.n_links[i_e]
+            for i_l_offset in range(n_in_e):
+                i_l = entities_info.link_start[i_e] + i_l_offset
+                I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                i_p = links_info.parent_idx[I_l]
+                if i_p != -1:
+                    for k in qd.static(range(3)):
+                        links_state.crb_pos.grad[i_l, i_b][k] = (
+                            links_state.crb_pos.grad[i_l, i_b][k] + links_state.crb_pos.grad[i_p, i_b][k]
+                        )
+                    for k in qd.static(range(4)):
+                        links_state.crb_quat.grad[i_l, i_b][k] = (
+                            links_state.crb_quat.grad[i_l, i_b][k] + links_state.crb_quat.grad[i_p, i_b][k]
+                        )
+                    for r in qd.static(range(3)):
+                        for c in qd.static(range(3)):
+                            links_state.crb_inertial.grad[i_l, i_b][r, c] = (
+                                links_state.crb_inertial.grad[i_l, i_b][r, c]
+                                + links_state.crb_inertial.grad[i_p, i_b][r, c]
+                            )
+                    links_state.crb_mass.grad[i_l, i_b] = (
+                        links_state.crb_mass.grad[i_l, i_b] + links_state.crb_mass.grad[i_p, i_b]
+                    )
