@@ -498,6 +498,218 @@ def func_COM_links_entity(
 
 
 @qd.func
+def func_j_pos_quat_propagation_entity(
+    i_e,
+    i_b,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    entities_info: array_class.EntitiesInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Phase 5 of `func_COM_links_entity` extracted as a standalone function.
+
+    Computes `j_pos`, `j_quat`, `j_pos_bw`, `j_quat_bw` from `links_state.pos`,
+    `links_state.quat` (and parent's pos/quat through chain). Phase 5 is
+    independent of Phase 0-4, 6 — uses no state set by them, and its outputs
+    are consumed by no other phase. So split is safe.
+
+    Extraction motivation: Quadrants AD silently drops cross-link grad chain
+    (parent's `links_state.pos[i_p, i_b]` / `links_state.quat[i_p, i_b]` read
+    into local `p_pos`, `p_quat`). On J4/J5 standalone FD verification of
+    `kernel_COM_links` shows pos/quat.grad rel error ~17-86%, while other
+    inputs (xanchor, xaxis, vel, mass_shift, i_pos_shift) pass FP64 floor.
+    Splitting Phase 5 into its own kernel allows replacing its backward with
+    a manual chain-rule implementation (`kernel_manual_COM_links_phase5_bw`
+    in `manual_bw.py`).
+    """
+    BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        if links_info.n_dofs[I_l] > 0:
+            i_p = links_info.parent_idx[I_l]
+
+            _i_j = links_info.joint_start[I_l]
+            _I_j = [_i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else _i_j
+            joint_type = joints_info.type[_I_j]
+
+            p_pos = qd.Vector.zero(gs.qd_float, 3)
+            p_quat = gu.qd_identity_quat()
+            if i_p != -1:
+                p_pos = links_state.pos[i_p, i_b]
+                p_quat = links_state.quat[i_p, i_b]
+
+            if joint_type == gs.JOINT_TYPE.FREE or (links_info.is_fixed[I_l] and i_p == -1):
+                links_state.j_pos[i_l, i_b] = links_state.pos[i_l, i_b]
+                links_state.j_quat[i_l, i_b] = links_state.quat[i_l, i_b]
+            else:
+                (
+                    links_state.j_pos_bw[i_l, 0, i_b],
+                    links_state.j_quat_bw[i_l, 0, i_b],
+                ) = gu.qd_transform_pos_quat_by_trans_quat(links_info.pos[I_l], links_info.quat[I_l], p_pos, p_quat)
+
+                n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+
+                for i_j_ in range(n_joints):
+                    i_j = i_j_ + links_info.joint_start[I_l]
+
+                    curr_i_j = 0 if qd.static(not BW) else i_j_
+                    next_i_j = 0 if qd.static(not BW) else i_j_ + 1
+
+                    if func_check_index_range(
+                        i_j,
+                        links_info.joint_start[I_l],
+                        links_info.joint_end[I_l],
+                        BW,
+                    ):
+                        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+
+                        (
+                            links_state.j_pos_bw[i_l, next_i_j, i_b],
+                            links_state.j_quat_bw[i_l, next_i_j, i_b],
+                        ) = gu.qd_transform_pos_quat_by_trans_quat(
+                            joints_info.pos[I_j],
+                            gu.qd_identity_quat(),
+                            links_state.j_pos_bw[i_l, curr_i_j, i_b],
+                            links_state.j_quat_bw[i_l, curr_i_j, i_b],
+                        )
+
+                i_j_ = 0 if qd.static(not BW) else n_joints
+                links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, i_j_, i_b]
+                links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
+
+
+@qd.func
+def func_COM_links_entity_main(
+    i_e,
+    i_b,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """`func_COM_links_entity` minus Phase 5 (j_pos/j_quat propagation).
+
+    Used by `kernel_COM_links_main` whose backward (Quadrants AD) is paired
+    with `kernel_manual_COM_links_phase5_bw` for the missing Phase 5 chain.
+    Body is byte-identical to `func_COM_links_entity` except the Phase 5
+    block (forward_kinematics.py:407-460 in the original) is omitted.
+    """
+    EPS = rigid_global_info.EPS[None]
+    i_b = qd.cast(i_b, qd.i32)
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        links_state.root_COM_bw[i_l, i_b].fill(0.0)
+        links_state.mass_sum[i_l, i_b] = 0.0
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
+        (
+            links_state.i_pos_bw[i_l, i_b],
+            links_state.i_quat[i_l, i_b],
+        ) = gu.qd_transform_pos_quat_by_trans_quat(
+            links_info.inertial_pos[I_l] + links_state.i_pos_shift[i_l, i_b],
+            links_info.inertial_quat[I_l],
+            links_state.pos[i_l, i_b],
+            links_state.quat[i_l, i_b],
+        )
+
+        i_r = links_info.root_idx[I_l]
+        links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
+        qd.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        i_r = links_info.root_idx[I_l]
+        if i_l == i_r:
+            mass_sum = links_state.mass_sum[i_l, i_b]
+            if mass_sum > EPS:
+                links_state.root_COM[i_l, i_b] = links_state.root_COM_bw[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+            else:
+                links_state.root_COM[i_l, i_b] = links_state.i_pos_bw[i_r, i_b]
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        i_r = links_info.root_idx[I_l]
+        links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        i_r = links_info.root_idx[I_l]
+        links_state.i_pos[i_l, i_b] = links_state.i_pos_bw[i_l, i_b] - links_state.root_COM[i_l, i_b]
+
+        i_inertial = links_info.inertial_i[I_l]
+        i_mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
+        (
+            links_state.cinr_inertial[i_l, i_b],
+            links_state.cinr_pos[i_l, i_b],
+            links_state.cinr_quat[i_l, i_b],
+            links_state.cinr_mass[i_l, i_b],
+        ) = gu.qd_transform_inertia_by_trans_quat(
+            i_inertial,
+            i_mass,
+            links_state.i_pos[i_l, i_b],
+            links_state.i_quat[i_l, i_b],
+            rigid_global_info.EPS[None],
+        )
+
+    # Phase 5 (j_pos/j_quat propagation) intentionally omitted — see
+    # `func_j_pos_quat_propagation_entity` for the extracted version.
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        if links_info.n_dofs[I_l] > 0:
+            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+                offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
+                I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                joint_type = joints_info.type[I_j]
+
+                dof_start = joints_info.dof_start[I_j]
+
+                if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                    dofs_state.cdof_ang[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
+                    dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b].cross(offset_pos)
+                elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                    dofs_state.cdof_ang[dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
+                elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                    xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start, i_b] = xmat_T[i, :]
+                        dofs_state.cdof_vel[i + dof_start, i_b] = xmat_T[i, :].cross(offset_pos)
+                elif joint_type == gs.JOINT_TYPE.FREE:
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        dofs_state.cdof_vel[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        dofs_state.cdof_vel[i + dof_start, i_b][i] = 1.0
+
+                    xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start + 3, i_b] = xmat_T[i, :]
+                        dofs_state.cdof_vel[i + dof_start + 3, i_b] = xmat_T[i, :].cross(offset_pos)
+
+                for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                    dofs_state.cdofvel_ang[i_d, i_b] = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                    dofs_state.cdofvel_vel[i_d, i_b] = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
+
+
+@qd.func
 def func_forward_kinematics_entity(
     i_e,
     i_b,
@@ -1936,6 +2148,104 @@ def kernel_COM_links(
             static_rigid_sim_config=static_rigid_sim_config,
             is_backward=is_backward,
         )
+
+
+@qd.kernel(fastcache=True)
+def kernel_COM_links_main(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """`kernel_COM_links` without Phase 5 (j_pos/j_quat propagation).
+
+    Used in `substep_pre_coupling_grad` paired with
+    `kernel_manual_COM_links_phase5_bw` to bypass Quadrants AD's silent drop
+    on the Phase 5 cross-link grad chain (parent's pos/quat read into a local
+    `p_pos`, `p_quat`). Forward replay covers Phase 0-4 (i_pos_bw, i_quat,
+    root_COM*, cinr_*) and Phase 6 (cdof_*, cdofvel_*); the missing Phase 5
+    forward must be supplied separately by `kernel_j_pos_quat_propagation`
+    before calling this kernel — otherwise downstream consumers of `j_pos`,
+    `j_quat`, `j_pos_bw`, `j_quat_bw` will read stale values.
+    """
+    for i_b in range(links_state.pos.shape[1]):
+        for i_e_ in (
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else range(entities_info.n_links.shape[0])
+        ):
+            if func_check_index_range(
+                i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_e_, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_e_
+                )
+                func_COM_links_entity_main(
+                    i_e,
+                    i_b,
+                    links_state,
+                    links_info,
+                    joints_state,
+                    joints_info,
+                    dofs_state,
+                    dofs_info,
+                    entities_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    is_backward,
+                )
+
+
+@qd.kernel(fastcache=True)
+def kernel_j_pos_quat_propagation(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Standalone kernel for Phase 5 (j_pos/j_quat propagation only).
+
+    Pairs with `kernel_COM_links_main` to recover the full `kernel_COM_links`
+    forward output. Backward is replaced by `kernel_manual_COM_links_phase5_bw`
+    (manual chain rule) to bypass Quadrants AD's silent drop on cross-link
+    parent.pos/parent.quat reads (J4/J5 standalone FD shows pos/quat.grad
+    rel error ~17-86% via auto-AD vs FP64 floor for other inputs).
+    """
+    for i_b in range(links_state.pos.shape[1]):
+        for i_e_ in (
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else range(entities_info.n_links.shape[0])
+        ):
+            if func_check_index_range(
+                i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_e_, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_e_
+                )
+                func_j_pos_quat_propagation_entity(
+                    i_e,
+                    i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_info=joints_info,
+                    entities_info=entities_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    is_backward=is_backward,
+                )
 
 
 @qd.kernel(fastcache=True)

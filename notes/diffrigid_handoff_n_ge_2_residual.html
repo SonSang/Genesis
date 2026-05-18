@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diffrigid Handoff — J4 N>=2 Residual</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --border: #d0d7de;
+  --code-bg: #f6f8fa;
+  --link: #0969da;
+  --accent: #d1242f;
+  --table-row: #f6f8fa;
+  --warn: #fff8c5;
+  --warn-border: #d4a72c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #9198a1;
+    --border: #30363d;
+    --code-bg: #161b22;
+    --link: #4493f8;
+    --accent: #ff7b72;
+    --table-row: #161b22;
+    --warn: #3d2e04;
+    --warn-border: #9e6a03;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR",
+               "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji";
+  font-size: 16px;
+  line-height: 1.6;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+nav.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 20px 16px;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--bg);
+}
+nav.sidebar h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 12px 0;
+  border: none;
+}
+nav.sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+nav.sidebar ul ul {
+  padding-left: 14px;
+  margin-top: 4px;
+}
+nav.sidebar a {
+  display: block;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--fg);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+}
+nav.sidebar a:hover {
+  background: var(--code-bg);
+  border-left-color: var(--link);
+  color: var(--link);
+}
+main {
+  padding: 32px 48px 80px 48px;
+  min-width: 0;
+}
+h1, h2, h3, h4, h5, h6 {
+  margin-top: 28px;
+  margin-bottom: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+h1 {
+  font-size: 2em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.05em; color: var(--muted); }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.headerlink {
+  margin-left: 6px;
+  opacity: 0;
+  font-weight: normal;
+  font-size: 0.8em;
+  text-decoration: none;
+}
+h1:hover .headerlink, h2:hover .headerlink, h3:hover .headerlink,
+h4:hover .headerlink, h5:hover .headerlink, h6:hover .headerlink {
+  opacity: 0.7;
+}
+p { margin: 0 0 12px 0; }
+code {
+  font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.45;
+}
+pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--fg);
+  font-size: 1em;
+}
+table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  overflow-x: auto;
+  display: block;
+  max-width: 100%;
+  font-size: 0.92em;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  text-align: left;
+}
+th {
+  background: var(--code-bg);
+  font-weight: 600;
+}
+tr:nth-child(even) td { background: var(--table-row); }
+blockquote {
+  margin: 12px 0;
+  padding: 4px 16px;
+  border-left: 4px solid var(--warn-border);
+  background: var(--warn);
+  color: var(--fg);
+  border-radius: 0 4px 4px 0;
+}
+blockquote p { margin: 8px 0; }
+ul, ol { padding-left: 28px; margin: 8px 0 14px 0; }
+li { margin-bottom: 4px; }
+li > p { margin: 4px 0; }
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 28px 0;
+}
+strong { font-weight: 600; }
+/* TL;DR callout */
+main > h2:first-of-type + p,
+main > h2:first-of-type + ul {
+  /* style follows naturally */
+}
+/* Mobile: collapse sidebar */
+@media (max-width: 900px) {
+  body { grid-template-columns: 1fr; }
+  nav.sidebar {
+    position: static;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  main { padding: 20px; }
+}
+/* codehilite syntax highlighting (minimal) */
+.highlight .k { color: #cf222e; }      /* keyword */
+.highlight .s, .highlight .s1, .highlight .s2 { color: #0a3069; }  /* string */
+.highlight .c, .highlight .c1 { color: #6e7781; font-style: italic; }  /* comment */
+.highlight .n { color: var(--fg); }    /* name */
+.highlight .mi, .highlight .mf { color: #0550ae; }  /* number */
+@media (prefers-color-scheme: dark) {
+  .highlight .k { color: #ff7b72; }
+  .highlight .s, .highlight .s1, .highlight .s2 { color: #a5d6ff; }
+  .highlight .c, .highlight .c1 { color: #8b949e; }
+  .highlight .mi, .highlight .mf { color: #79c0ff; }
+}
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <h2>Table of Contents</h2>
+  <div class="toc">
+<ul>
+<li><a href="#tldr-executive-summary">⭐ TL;DR (Executive Summary)</a><ul>
+<li><a href="#root-cause">식별된 root cause</a></li>
+<li><a href="#fix-strategy-byte-exact-identical-worse">시도된 fix strategy (모두 byte-exact identical 또는 worse)</a></li>
+<li><a href="#verification-fp64-floor">결정적 verification (FP64 floor 까지 정확 확인)</a></li>
+<li><a href="#_1">실용 권장</a></li>
+<li><a href="#working-diagnostics">Working diagnostics</a></li>
+<li><a href="#code-state">Code state (모든 시도 후)</a></li>
+</ul>
+</li>
+<li><a href="#revision-history-rev-1-rev-10-sections">이전 revision history (rev 1 ~ rev 10) — 아래 sections</a></li>
+<li><a href="#_2">현재 상태</a></li>
+<li><a href="#2026-05-14">핵심 진단 (2026-05-14)</a><ul>
+<li><a href="#n1-wrong-fd-precision-floor-step_2grad-silent-drop">N=1 wrong 의 본질: FD precision floor + step_2.grad silent drop</a></li>
+<li><a href="#step_2grad-silent-drop-1e-11">step_2.grad 자체에 silent drop ~1e-11</a></li>
+<li><a href="#hypothesis-1-qpos-copy-falsified">Hypothesis 1 (qpos copy 제거): FALSIFIED</a></li>
+<li><a href="#hypothesis-2-qpos-pre-integrate-restore-before-step_2grad-falsified">Hypothesis 2 (qpos pre-integrate restore before step_2.grad): FALSIFIED</a></li>
+<li><a href="#hypothesis-3-manual-quat-reverse-pre-call-before-step_2grad-falsified">Hypothesis 3 (manual quat reverse pre-call before step_2.grad): FALSIFIED</a></li>
+</ul>
+</li>
+<li><a href="#_3">가설 우선순위 (수정)</a><ul>
+<li><a href="#3-priority-1-step_2grad-quat_mul-reverse-small-term-silent-drop">가설 3 (priority 1): step_2.grad 의 quat_mul reverse 의 small-term silent drop</a></li>
+<li><a href="#4-priority-2-forward_dynamics-chain-isolated-fd-verify">가설 4 (priority 2): forward_dynamics chain isolated FD verify</a></li>
+</ul>
+</li>
+<li><a href="#_4">다음 단계</a><ul>
+<li><a href="#step-a-step_2grad-manual-quat-update-reverse">Step A: step_2.grad 의 manual quat update reverse 구현</a></li>
+<li><a href="#never-falsified-strategies">NEVER (FALSIFIED strategies — 다시 시도 금지)</a></li>
+</ul>
+</li>
+<li><a href="#strategy-a2-progress-2026-05-14">Strategy A2 검증 progress (2026-05-14)</a><ul>
+<li><a href="#isolated-fd">Isolated FD 검증 결과</a></li>
+<li><a href="#silent-drop-source-2">좁혀진 silent drop source — 2 가설</a></li>
+<li><a href="#x1-2026-05-14-falsified">가설 X1 검증 결과 (2026-05-14): FALSIFIED</a></li>
+<li><a href="#x2-cross-kernel-stash-interference">가설 X2 확정 방향: cross-kernel stash interference</a></li>
+<li><a href="#strategy-a2-implementation-0">Strategy A2 implementation 시도 결과: 효과 0%</a></li>
+</ul>
+</li>
+<li><a href="#revision-10-2026-05-14-final-option-c-falsified-fundamental-quadrants-ad-limit-accepted">REVISION 10 (2026-05-14): FINAL — Option C falsified, fundamental Quadrants AD limit accepted</a><ul>
+<li><a href="#option-c">Option C 시도 결과</a></li>
+<li><a href="#strategy">Strategy 시도 종합</a></li>
+<li><a href="#_5">최종 결론</a></li>
+<li><a href="#genesis">실용 권장 (Genesis 사용자)</a></li>
+<li><a href="#task-77-j4-n4-wrong-source">Task #77 (J4 N=4 wrong source 식별) — 완료</a></li>
+</ul>
+</li>
+<li><a href="#revision-9-2026-05-14-option-2-byte-exact-identical-quadrants-fma-optimization-fundamental">REVISION 9 (2026-05-14): Option 2 byte-exact identical — Quadrants FMA optimization fundamental</a><ul>
+<li><a href="#option-2">Option 2 시도 결과</a></li>
+<li><a href="#fundamental-quadrants-ad-fp-limitation">결론 — fundamental Quadrants AD / FP limitation</a></li>
+<li><a href="#fix">진정한 fix 가능 한 방향 (남은)</a></li>
+<li><a href="#action-items-session">Action items 정리 (다음 session)</a></li>
+<li><a href="#code-state-option-2">Code state (option 2 시도 후)</a></li>
+</ul>
+</li>
+<li><a href="#revision-8-2026-05-14-drift-source-isolated-transform_by_quat-reverse-fp-order-diff">REVISION 8 (2026-05-14): drift source isolated — transform_by_quat reverse 의 FP order diff</a><ul>
+<li><a href="#_6">결정적 진단 단계</a></li>
+<li><a href="#real-source">Real source</a></li>
+<li><a href="#forward-fma-vs-manual-reverse-fp-order-divergence">의미 — forward FMA vs manual reverse의 FP order divergence</a></li>
+<li><a href="#fix_1">진정한 fix 방향</a></li>
+<li><a href="#verification">단순 verification (즉시 가능)</a></li>
+<li><a href="#recommended-next-session-work">Recommended next session work</a></li>
+</ul>
+</li>
+<li><a href="#revision-7-2026-05-14-option-b3-detailed-verify-drift-dt-systematic-wrong-identified">REVISION 7 (2026-05-14): option B3 detailed verify — drift ∝ dt, systematic wrong identified</a><ul>
+<li><a href="#_7">진단 결과</a></li>
+<li><a href="#session-top-suspects">다음 session 의 top suspects</a></li>
+<li><a href="#recommended-next-session-work-order">Recommended next session work order</a></li>
+</ul>
+</li>
+<li><a href="#revision-6-2026-05-14-option-b2-simple-zero-falsified-genesis-checkpoint-interaction">REVISION 6 (2026-05-14): option B2 simple zero falsified — Genesis checkpoint interaction</a><ul>
+<li><a href="#option-b2-implementation">Option B2 implementation 시도</a></li>
+<li><a href="#_8">결과</a></li>
+<li><a href="#author-finding-line-1530-1541">이전 author 의 동일 finding (line 1530-1541 코멘트)</a></li>
+<li><a href="#genesis-checkpoint-mechanism">Genesis checkpoint mechanism 의 의미</a></li>
+<li><a href="#option-b3-simplified-2026-05-14">Option B3 simplified 진행 결과 (2026-05-14)</a></li>
+<li><a href="#finding">결정적 finding</a></li>
+<li><a href="#session-work">다음 session 우선 work</a></li>
+<li><a href="#codebase-state">Codebase state</a></li>
+<li><a href="#option-b2">코드 상태 (option B2 시도 후)</a></li>
+</ul>
+</li>
+<li><a href="#revision-5-2026-05-14-real-source-cross-substep-cumulative-drift">REVISION 5 (2026-05-14): real source = cross-substep cumulative drift</a><ul>
+<li><a href="#4">결정적 진단 4 단계</a></li>
+<li><a href="#real-wrong-source">Real wrong source 정확한 위치</a></li>
+<li><a href="#strategy-0">Strategy 회고 — 모든 시도가 효과 0% 였던 이유 최종</a></li>
+<li><a href="#session-work_1">다음 session 우선 work</a></li>
+</ul>
+</li>
+<li><a href="#old-handoff-revision-5-obsolete">OLD HANDOFF — REVISION 5 가 OBSOLETE 으로 만듦</a></li>
+<li><a href="#decisive-finding-2026-05-14-revision-4-silent-drop-falsified">DECISIVE FINDING (2026-05-14, revision 4): silent drop 가설 자체 FALSIFIED</a><ul>
+<li><a href="#chain">진단 chain</a></li>
+<li><a href="#strategy-a1-a2">Strategy A1, A2 시도들의 의미 재해석</a></li>
+<li><a href="#real-wrong-source-step_2grad">Real wrong source 는 step_2.grad 가 아님</a></li>
+<li><a href="#session-work_2">다음 session 우선 work</a></li>
+</ul>
+</li>
+<li><a href="#old-handoff-finding-obsolete">OLD HANDOFF — 이 위 finding 으로 OBSOLETE</a><ul>
+<li><a href="#strategy-a1-2026-05-14-revision-3">Strategy A1 확장 — 결정적 진단 (2026-05-14, revision 3)</a></li>
+<li><a href="#production-state-manual-kernel-output-capture">Production state 의 manual kernel output capture</a></li>
+<li><a href="#isolated-test-vs-production-state">isolated test vs production state 의 결정적 차이</a></li>
+<li><a href="#_9">원인 진단</a></li>
+<li><a href="#strategy-a1-a2-0">Strategy A1, A2 모두 효과 0%</a></li>
+<li><a href="#session-work_3">다음 session 우선 work</a></li>
+</ul>
+</li>
+<li><a href="#falsified">이전 시도들 — FALSIFIED 기록</a><ul>
+<li><a href="#strategy-a1-2026-05-14-0">Strategy A1 시도 결과 (초기, 2026-05-14): 효과 0%</a></li>
+<li><a href="#strategy-a1-a2-falsified">Strategy A1, A2 모두 falsified</a></li>
+<li><a href="#session-approach">다음 session 의 유일하게 남은 approach</a></li>
+</ul>
+</li>
+<li><a href="#working-diagnostics_1">Working diagnostics</a><ul>
+<li><a href="#step-b-forward_dynamics-chain-isolated-fd-verify">Step B: forward_dynamics chain isolated FD verify</a></li>
+</ul>
+</li>
+<li><a href="#_10">부산물</a></li>
+<li><a href="#working-diagnostics_2">Working diagnostics</a></li>
+</ul>
+</div>
+
+</nav>
+<main>
+<h1 id="diffrigid-handoff-j4-n2-wrong-source">Diffrigid Handoff — J4 N&gt;=2 잔여 wrong source 추적<a class="headerlink" href="#diffrigid-handoff-j4-n2-wrong-source" title="Permanent link">&para;</a></h1>
+<p>날짜: 2026-05-14 (revision 10 — FINAL CONCLUSION)<br />
+참고 commit: <code>a3361ce3</code> (vel copy fix).</p>
+<hr />
+<h2 id="tldr-executive-summary">⭐ TL;DR (Executive Summary)<a class="headerlink" href="#tldr-executive-summary" title="Permanent link">&para;</a></h2>
+<p><strong>Real wrong source 식별 + 모든 fix strategy 시도 + falsified → fundamental Quadrants AD / FP precision 한계 결론.</strong></p>
+<h3 id="root-cause">식별된 root cause<a class="headerlink" href="#root-cause" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>transform_by_quat(arm_local, parent_quat)</code> with non-zero <code>arm_local</code></strong>: drift ∝ |arm_local| (arm_x=0 시 FP64 floor PASS).</li>
+<li><strong>Numerical mechanism</strong>: forward FMA-fusion chain vs manual reverse mathematical-clean 식 의 <em>FP arithmetic order divergence</em>. 각 substep ~1e-12 → N step cumulative → N=16 에서 1e-9.</li>
+</ul>
+<h3 id="fix-strategy-byte-exact-identical-worse">시도된 fix strategy (모두 byte-exact identical 또는 worse)<a class="headerlink" href="#fix-strategy-byte-exact-identical-worse" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Strategy</th>
+<th>결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>A1 (manual func_integrate_bw, step_2.grad replace)</td>
+<td>byte-exact (step_2.grad 이미 정확)</td>
+</tr>
+<tr>
+<td>2</td>
+<td>A2 (split kernel)</td>
+<td>byte-exact</td>
+</tr>
+<tr>
+<td>3</td>
+<td>qpos primal restore before step_2.grad</td>
+<td>byte-exact</td>
+</tr>
+<tr>
+<td>4</td>
+<td>manual pre-call</td>
+<td>byte-exact</td>
+</tr>
+<tr>
+<td>5</td>
+<td>qpos copy 제거</td>
+<td>catastrophic (UCS.grad 망가짐)</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Option 2 (forward intermediate temps in qd_transform_by_quat)</td>
+<td>byte-exact (Quadrants compiler inline+FMA)</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Suspect 2 (d_transform_by_quat__dq scalar 재작성)</td>
+<td>byte-exact</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Option B2 (simple cross-substep zero)</td>
+<td>Genesis checkpoint reset interaction</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Option C (selective zero + carrier backup)</td>
+<td>50x~1000x worse (legitimate chain 끊김)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification-fp64-floor">결정적 verification (FP64 floor 까지 정확 확인)<a class="headerlink" href="#verification-fp64-floor" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>kernel_manual_func_integrate_bw</code> (scalar): production state byte-exact = manual numpy</li>
+<li><code>kernel_manual_compute_qacc_bw</code> (LDLT IFT): production state max|d| 4.96e-24</li>
+<li>verify_v2 explicit scalar form: production kernel_step_2.grad = manual numpy byte-exact</li>
+<li>forward quat unit-norm drift: 4.4e-16 (FP64 floor)</li>
+</ul>
+<h3 id="_1">실용 권장<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>N ≤ 4</strong>: rel error ~1e-2 ~ 1e-4 (실용 적절)</li>
+<li><strong>N ≥ 8 (FREE+revolute multi-link)</strong>: rel error 1.0+ catastrophic → <strong>회피</strong></li>
+<li><strong>mitigation</strong>: dt 작게 (drift ∝ dt), arm offset 작게 (drift ∝ |arm_local|), chain length 짧게</li>
+</ul>
+<h3 id="working-diagnostics">Working diagnostics<a class="headerlink" href="#working-diagnostics" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>notes/diag_j4_n2_step2_bw_verify.py</code> (rev: explicit scalar) — production step_2.grad PASS</li>
+<li><code>notes/diag_manual_func_integrate_bw_verify.py</code> — manual kernel isolated PASS</li>
+<li><code>notes/diag_manual_kernel_prod_state.py</code> — manual kernel production state PASS</li>
+<li><code>notes/diag_manual_compute_qacc_prod_state.py</code> — compute_qacc.grad production PASS</li>
+<li><code>notes/diag_combined_with_production_state.py</code> — production state inject (X1 falsified)</li>
+<li><code>notes/diag_combined_update_acc_integrate_fd.py</code> — random state combined verify</li>
+<li><code>notes/diag_func_integrate_isolated_fd.py</code> — standalone FD verify (PASS)</li>
+<li><code>notes/diag_j4_n2_perdof.py</code> — N=2 per-DOF breakdown</li>
+<li><code>notes/diag_j4_n2_substep_dump.py</code> + <code>notes/parse_dump.py</code> — stage-by-stage dump</li>
+<li><code>/tmp/diag_determinism.py</code> — deterministic confirmed</li>
+<li><code>/tmp/diag_all_topo_n_progression.py</code> — topology comparison (J4 only catastrophic)</li>
+<li><code>/tmp/diag_j4_n16_richardson.py</code> — Richardson FD reference</li>
+<li><code>/tmp/diag_j4_n_progression.py</code> — N 별 amplification</li>
+<li><code>/tmp/diag_dt_sensitivity.py</code> — drift ∝ dt</li>
+<li><code>/tmp/diag_j4_inertia_sensitivity.py</code> — inertia 영향 없음</li>
+<li><code>/tmp/diag_j4_offset_sensitivity.py</code> — <strong>arm offset DECISIVE</strong> (drift ∝ |arm_local|)</li>
+<li><code>/tmp/diag_quat_norm_drift.py</code> — forward unit-norm floor</li>
+<li><code>/tmp/diag_full_precision_check.py</code> — 16 sig fig comparison</li>
+<li><code>/tmp/diag_n2_t1_vs_n1.py</code> — single substep backward byte-exact</li>
+</ul>
+<h3 id="code-state">Code state (모든 시도 후)<a class="headerlink" href="#code-state" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>rigid_solver.py</code>, <code>geom.py</code>, <code>forward_dynamics.py</code>, <code>manual_bw.py</code>: clean revert</li>
+<li><code>manual_bw.py</code> 의 <code>kernel_manual_func_integrate_bw</code> (scalar), <code>forward_dynamics.py</code> 의 standalone wrappers: 유지 (FP64 floor verified framework)</li>
+</ul>
+<hr />
+<h2 id="revision-history-rev-1-rev-10-sections">이전 revision history (rev 1 ~ rev 10) — 아래 sections<a class="headerlink" href="#revision-history-rev-1-rev-10-sections" title="Permanent link">&para;</a></h2>
+<h2 id="_2">현재 상태<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p><code>copy_next_to_curr_no_check</code> 의 vel copy 제거 fix 가 <em>forward_velocity primal stale wrong</em> 해결. J4 N=2 stage 14 vel.grad FP64 floor (10/10 seeds).</p>
+<p>J4 의 N=4, 8, 16, 32 에서 <em>여전히 wrong</em>:<br />
+- N=1: max rel 7.190e-03 (실제로는 FD precision floor — see below)<br />
+- N=2: max rel 2.799e-03<br />
+- N=4: max rel 3.630e-01<br />
+- N=8: max rel 6.539<br />
+- N=16: max rel 1.325e+01<br />
+- N=32: max rel 3.588e+00</p>
+<h2 id="2026-05-14">핵심 진단 (2026-05-14)<a class="headerlink" href="#2026-05-14" title="Permanent link">&para;</a></h2>
+<h3 id="n1-wrong-fd-precision-floor-step_2grad-silent-drop">N=1 wrong 의 본질: FD precision floor + step_2.grad silent drop<a class="headerlink" href="#n1-wrong-fd-precision-floor-step_2grad-silent-drop" title="Permanent link">&para;</a></h3>
+<p>N=1 J4 의 <em>worst rel error</em> 들 (<code>diag_j4_n1_perdof_10seeds.py</code>):<br />
+- seed 1004 root_z: rel 7.190e-03, <strong>diff abs 1.6e-12</strong> ← FD eps=1e-5 의 truncation noise<br />
+- seed 1004 root_y: rel 2.225e-03, diff abs 1.18e-12 ← noise<br />
+- seed 1007 arm_rev: rel 1.978e-03, diff abs 6.09e-13 ← noise</p>
+<p>⇒ N=1 의 <em>큰 rel error 는 FD precision limit</em>. <em>real systematic wrong 의 abs magnitude 1e-11 ~ 1e-12 floor</em>.</p>
+<h3 id="step_2grad-silent-drop-1e-11">step_2.grad 자체에 silent drop ~1e-11<a class="headerlink" href="#step_2grad-silent-drop-1e-11" title="Permanent link">&para;</a></h3>
+<p><code>diag_j4_n2_step2_bw_verify.py</code> 의 결과 (production state isolated):<br />
+- manual vs kernel <strong>vel.grad diff = 1.14e-11</strong> (root_wy)<br />
+- manual vs kernel <strong>qpos.grad diff = 2.28e-09</strong> (qpos[5] = q_pre.y)</p>
+<p>manual computation (FP64 정확): <code>q_pre.y.grad = -9.1054e-05</code><br />
+kernel (Quadrants AD): <code>q_pre.y.grad = -9.1052e-05</code> <br />
+⇒ <strong>kernel 이 manual 보다 2.28e-09 부족</strong></p>
+<p>이 silent drop 이 <em>N step 누적되어 N=8, 16, 32 의 large rel error 의 source</em>.</p>
+<h3 id="hypothesis-1-qpos-copy-falsified">Hypothesis 1 (qpos copy 제거): FALSIFIED<a class="headerlink" href="#hypothesis-1-qpos-copy-falsified" title="Permanent link">&para;</a></h3>
+<ul>
+<li>제거 시 <em>모든 DOF catastrophic wrong</em> (root_wx rel 1e+04+, etc.)</li>
+<li>이유: UCS.grad 의 FK Jacobian 빌딩에 post-integrate qpos 필요</li>
+</ul>
+<h3 id="hypothesis-2-qpos-pre-integrate-restore-before-step_2grad-falsified">Hypothesis 2 (qpos pre-integrate restore before step_2.grad): FALSIFIED<a class="headerlink" href="#hypothesis-2-qpos-pre-integrate-restore-before-step_2grad-falsified" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>kernel_restore_qpos_from_adjoint_cache</code> 추가 후 step_2.grad 직전 호출</li>
+<li>결과: byte-exact same dump (fix 전후 stage 별 grad 값 100% 동일)</li>
+<li>검증: qpos[3]=1e10 강제 set 시 ana 폭발 (kernel 호출은 정상)</li>
+<li>결론: <strong>Quadrants AD 가 <em>forward 시점 stash primal</em> 사용 — backward 시점의 field 변경은 step_2.grad 에 영향 없음</strong></li>
+</ul>
+<h3 id="hypothesis-3-manual-quat-reverse-pre-call-before-step_2grad-falsified">Hypothesis 3 (manual quat reverse pre-call before step_2.grad): FALSIFIED<a class="headerlink" href="#hypothesis-3-manual-quat-reverse-pre-call-before-step_2grad-falsified" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>kernel_manual_step_2_freejoint_quat_bw</code> 작성: rot0_grad / vel_next.grad[3..5] 누적 후 qpos_next.grad[3..6] zero set, step_2.grad 직전 호출</li>
+<li>결과: per-DOF byte-exact same as no-fix (rel error 변화 0)</li>
+<li>검증: manual kernel 안에서 qpos.grad[4] = 1e10 강제 set 시 <em>t=0 backward 만 폭발</em>, <em>t=1 backward 변화 없음</em></li>
+<li>결론: <strong>Quadrants step_2.grad reverse 의 첫 op 가 <code>qpos.grad[3..6] = 0</code> reset</strong> (forward <code>qpos[j] = quat[j]</code> 의 reverse). manual 의 add 가 Quadrants 의 zero reset 으로 덮어쓰여 무효화. <em>manual pre-call 전략 자체가 broken</em>.</li>
+<li>함의: <strong>manual replace 는 <em>step_2.grad 호출 </em>후</strong> 또는 <em>step_2.grad 자체 skip + full manual</em> 방식이어야 함**.</li>
+</ul>
+<h2 id="_3">가설 우선순위 (수정)<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h3 id="3-priority-1-step_2grad-quat_mul-reverse-small-term-silent-drop">가설 3 (priority 1): step_2.grad 의 quat_mul reverse 의 small-term silent drop<a class="headerlink" href="#3-priority-1-step_2grad-quat_mul-reverse-small-term-silent-drop" title="Permanent link">&para;</a></h3>
+<p><code>diag_j4_n2_step2_bw_verify.py</code> 에서 manual 계산:</p>
+<div class="highlight"><pre><span></span><code>manual q_pre.y.grad = sum of 4 quat_mul terms:
+  -qrot_y * q_next.grad[0] = -4.888e-06  ← largest
+  + qrot_z * q_next.grad[1] = -5.566e-09 ← small term 1
+  + qrot_w * q_next.grad[2] = -8.616e-05 ← largest negative
+  - qrot_x * q_next.grad[3] = 2.378e-09  ← small term 2
+  -----------
+  = -9.1054e-05
+</code></pre></div>
+
+<p>가설: <em>small term 1 + small term 2 ≈ 3e-09 contribution</em> 이 <em>Quadrants AD 의 chain accumulation 에서 silent drop</em>.</p>
+<p>검증 방법:<br />
+1. <code>diag_j4_n2_step2_bw_verify.py</code> 를 더 세분화 — <em>4 term 각각 isolate</em>. <em>Quadrants AD 가 small term drop</em> 인지 확인.<br />
+2. <code>func_integrate_dq_entity</code> 의 <em>quat_mul</em> 만 grad_replaced + manual reverse 로 우회.</p>
+<h3 id="4-priority-2-forward_dynamics-chain-isolated-fd-verify">가설 4 (priority 2): forward_dynamics chain isolated FD verify<a class="headerlink" href="#4-priority-2-forward_dynamics-chain-isolated-fd-verify" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>kernel_split_bias_force.grad</code>, <code>kernel_split_update_acc.grad</code>, <code>kernel_split_torque_and_passive_force.grad</code>, <code>kernel_compute_qacc.grad</code> (LDLT) 각각 isolated FD.</li>
+<li>N&gt;=4 의 root_wz / root_y / arm_rev 의 small wrong 의 source 가능.</li>
+</ul>
+<h2 id="_4">다음 단계<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<h3 id="step-a-step_2grad-manual-quat-update-reverse">Step A: step_2.grad 의 manual quat update reverse 구현<a class="headerlink" href="#step-a-step_2grad-manual-quat-update-reverse" title="Permanent link">&para;</a></h3>
+<p><strong>가능 strategy 3 개</strong> (priority 순):</p>
+<p><strong>Strategy A1: <code>grad_replaced</code> + <code>grad_for</code> (가장 깔끔)</strong><br />
+- <code>func_integrate</code> 의 <em>FREE joint quat update 부분</em> (line 1331-1354 of forward_dynamics.py) 을 <code>qd.ad.grad_replaced</code> 로 wrap.<br />
+- <code>qd.ad.grad_for</code> 로 <em>manual reverse</em> 등록.<br />
+- Quadrants AD 가 <em>그 부분 reverse 자동 skip</em> + manual 호출.<br />
+- 다른 path (translation, revolute, vel_next computation) 은 Quadrants 정상 사용.<br />
+- <em>큰 implementation</em>, 가장 robust.</p>
+<p><strong>Strategy A2: full manual step_2.grad (Quadrants step_2.grad 호출 skip)</strong><br />
+- <code>manual_bw.py</code> 에 <code>kernel_manual_step_2_bw_entity</code> 작성 — vel_next/qpos_next.grad → vel/qpos/acc.grad 의 <em>전체 reverse</em> manual.<br />
+- <code>rigid_solver.py</code> 의 <code>kernel_step_2.grad(...)</code> 호출 <em>제거</em>.<br />
+- <em>함수 단위 manual</em> — <code>func_update_acc, func_implicit_damping, func_integrate, func_hibernate, func_aggregate_awake</code> 모두 reverse 필요. <em>큰 작업</em>.</p>
+<p><strong>Strategy A3: post-call correction (간단하지만 fragile)</strong><br />
+- step_2.grad <em>호출 전</em> <code>qpos_next.grad[3..6]</code> 을 backup field 에 저장.<br />
+- step_2.grad 호출 (Quadrants 가 quat reverse + silent drop).<br />
+- <em>manual computation</em> (backup → manual rot0_grad).<br />
+- <code>qpos.grad[3..6] = manual_rot0_grad</code> 로 <em>overwrite</em> (Quadrants 의 contribution 폐기).<br />
+- <code>vel_next.grad[3..5]</code> 도 보정 필요 (Quadrants 의 ang chain contribution 제거 + manual 추가).</p>
+<h3 id="never-falsified-strategies">NEVER (FALSIFIED strategies — 다시 시도 금지)<a class="headerlink" href="#never-falsified-strategies" title="Permanent link">&para;</a></h3>
+<ol>
+<li><em>qpos primal restore before step_2.grad</em>: Quadrants AD 의 stash 가 <em>forward 시점 primal</em> 사용 — 무효.</li>
+<li><em>manual pre-call before step_2.grad</em>: Quadrants reverse 의 첫 op (<code>qpos.grad[3..6] = 0</code> reset) 가 manual 누적 덮어씀.</li>
+<li><em>qpos copy 제거</em>: UCS.grad Jacobian 빌딩 망가짐 (catastrophic).</li>
+</ol>
+<h2 id="strategy-a2-progress-2026-05-14">Strategy A2 검증 progress (2026-05-14)<a class="headerlink" href="#strategy-a2-progress-2026-05-14" title="Permanent link">&para;</a></h2>
+<p>Standalone wrapper kernels 추가 (forward_dynamics.py):<br />
+- <code>kernel_func_integrate_standalone</code>: <code>func_integrate</code> 만<br />
+- <code>kernel_update_acc_plus_integrate_standalone</code>: <code>func_update_acc + func_integrate</code> (= backward 시 step_2 의 active chain — default integrator approximate_implicitfast 는 implicit_damping skip)</p>
+<h3 id="isolated-fd">Isolated FD 검증 결과<a class="headerlink" href="#isolated-fd" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>manual vs kernel diff</th>
+<th>결론</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>func_integrate</code> alone (random state)</td>
+<td>0.000e+00 (qpos.grad), 2e-19 (others)</td>
+<td>Quadrants AD reverse 자체 정확</td>
+</tr>
+<tr>
+<td><code>func_update_acc + func_integrate</code> combined (random state)</td>
+<td>0.000e+00 (all)</td>
+<td>2-함수 chain 도 정확</td>
+</tr>
+<tr>
+<td>production <code>kernel_step_2.grad</code> (<code>diag_j4_n2_step2_bw_verify.py</code>)</td>
+<td>1.14e-11 (vel.grad), 2.28e-09 (qpos.grad)</td>
+<td><strong>silent drop 발생</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="silent-drop-source-2">좁혀진 silent drop source — 2 가설<a class="headerlink" href="#silent-drop-source-2" title="Permanent link">&para;</a></h3>
+<p><strong>가설 X1</strong>: <em>production state-specific numerical condition</em><br />
+- random state 의 standalone 에서는 PASS<br />
+- production 의 <code>cdof_*, cdofd_*, near-identity quat</code> 등 특수 numerical 조건이 small-term drop trigger<br />
+- 검증: production state (qpos, vel, acc, cdof_<em>, cdofd_</em>, gravity, …) 를 capture 후 standalone combined kernel 에 inject → .grad output 측정 → manual 과 diff 비교.</p>
+<p><strong>가설 X2</strong>: <em>cross-kernel stash interference</em><br />
+- <code>self.substep(f)</code> 가 <code>kernel_step_1 + kernel_step_2</code> 호출<br />
+- <code>kernel_step_1</code> 의 <em>func_forward_dynamics → func_compute_qacc</em> 안에서 <em>func_update_acc(update_cacc=False)</em> 호출 — <em>동일 fields 의 forward stash 생성</em><br />
+- <em>그 stash 가 <code>kernel_step_2</code> 의 </em>func_update_acc(update_cacc=True) stash 와 <em>Quadrants AD 의 cross-kernel chain 에서 interfere</em>*<br />
+- 검증: standalone 에 <code>kernel_step_1</code> 추가 호출 (forward stash 생성) 후 <code>kernel_update_acc_plus_integrate_standalone.grad</code> 호출 → diff 측정.</p>
+<h3 id="x1-2026-05-14-falsified">가설 X1 검증 결과 (2026-05-14): <strong>FALSIFIED</strong><a class="headerlink" href="#x1-2026-05-14-falsified" title="Permanent link">&para;</a></h3>
+<p><code>diag_combined_with_production_state.py</code>:<br />
+- production sim 실행 후 <code>(qpos, vel, acc, cdofd_*, cdof_*, gravity)</code> capture<br />
+- standalone solver 에 production state inject + standalone (update_acc + integrate) forward + .grad<br />
+- production seed (qpos_next.grad, vel_next.grad) inject</p>
+<p>결과:<br />
+- standalone .grad vs manual: <strong>max|diff| = 1.35e-20 ~ 6.78e-25</strong> (완전 FP64 floor)<br />
+- standalone qpos.grad[5] = -9.10543e-05 (= manual)<br />
+- production kernel_step_2.grad qpos.grad[5] = -9.10520e-05 (= manual - 2.28e-09)</p>
+<p>⇒ <strong>production state 자체는 silent drop 의 source 아님</strong>. 동일 state, 동일 seed 라도 standalone 은 정확.</p>
+<h3 id="x2-cross-kernel-stash-interference">가설 X2 확정 방향: cross-kernel stash interference<a class="headerlink" href="#x2-cross-kernel-stash-interference" title="Permanent link">&para;</a></h3>
+<p><code>self.substep(f)</code> 가 <code>kernel_step_1 + kernel_step_2</code> 호출:<br />
+- <code>kernel_step_1</code> 의 <code>func_forward_dynamics → func_compute_qacc</code> 안에서 <code>func_update_acc(update_cacc=False)</code> 호출<br />
+- <code>kernel_step_2</code> 안에서 <code>func_update_acc(update_cacc=True)</code> 호출<br />
+- <em>동일 fields (cdd_vel, cdd_ang, cacc_</em>, dofs_state.acc, vel)<em> 에 </em>2번 write*</p>
+<p>Quadrants AD 가 <em>kernel boundary 를 넘어 fields-level 로 stash chain 공유</em> → <em>kernel_step_2.grad 가 </em>kernel_step_1 forward stash 와 cross-kernel interference*.</p>
+<h3 id="strategy-a2-implementation-0">Strategy A2 implementation 시도 결과: 효과 0%<a class="headerlink" href="#strategy-a2-implementation-0" title="Permanent link">&para;</a></h3>
+<p><code>rigid_solver.py</code> 에서:<br />
+- <code>self.substep(f)</code> 가 <em>self._is_backward=True 일 때 <code>kernel_update_acc_plus_integrate_standalone</code> 호출</em> (기존 kernel_step_2 대신)<br />
+- <code>substep_pre_coupling_grad</code> 에서 <em>kernel_step_2.grad → kernel_update_acc_plus_integrate_standalone.grad</em></p>
+<p>결과: per-DOF rel error <em>변화 0</em> (seed 1000 t=0 root_wy rel = 1.413e-03 그대로).</p>
+<p><strong>해석</strong>:<br />
+- standalone 도 <em>동일 solver 안에서 호출</em> → kernel_step_1 의 forward stash 와 <em>fields-level chain</em> 으로 cross-kernel interference 발생<br />
+- <em>kernel 단위 stash 분리</em> 만으로는 부족 — Quadrants AD 의 chain 은 <em>fields-level</em><br />
+- <em>standalone solver (별 instance)</em> 의 test 가 PASS 였던 이유: kernel_step_1 의 forward 가 <em>아예 호출 안 됨</em></p>
+<h2 id="revision-10-2026-05-14-final-option-c-falsified-fundamental-quadrants-ad-limit-accepted">REVISION 10 (2026-05-14): FINAL — Option C falsified, fundamental Quadrants AD limit accepted<a class="headerlink" href="#revision-10-2026-05-14-final-option-c-falsified-fundamental-quadrants-ad-limit-accepted" title="Permanent link">&para;</a></h2>
+<h3 id="option-c">Option C 시도 결과<a class="headerlink" href="#option-c" title="Permanent link">&para;</a></h3>
+<p><code>substep_pre_coupling_grad</code> 진입 시 <em>primary carriers (pos.grad / quat.grad / qpos.grad / vel.grad / qpos_next.grad / vel_next.grad) backup + zero all + restore</em>:</p>
+<table>
+<thead>
+<tr>
+<th>DOF</th>
+<th>baseline abs_diff</th>
+<th>Option C abs_diff</th>
+<th>변화</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>root_y</td>
+<td>5.6e-11</td>
+<td><strong>1.98e-08</strong></td>
+<td>350x 악화</td>
+</tr>
+<tr>
+<td>root_z</td>
+<td>4.5e-11</td>
+<td><strong>5.20e-08</strong></td>
+<td>1000x 악화</td>
+</tr>
+<tr>
+<td>root_wy</td>
+<td>4.8e-10</td>
+<td><strong>4.32e-07</strong></td>
+<td><strong>900x 악화</strong></td>
+</tr>
+<tr>
+<td>root_wz</td>
+<td>3.9e-09</td>
+<td>1.98e-07</td>
+<td>50x 악화</td>
+</tr>
+<tr>
+<td>arm_rev</td>
+<td>3.7e-10</td>
+<td>2.62e-07</td>
+<td>700x 악화</td>
+</tr>
+</tbody>
+</table>
+<p>⇒ <strong>모든 DOF dramatically 악화</strong>. 이전 author 의 코멘트 (rigid_solver.py:1530-1541) 와 일치:</p>
+<blockquote>
+<p>Naively zeroing the candidate fields here did NOT recover J1 multistep precision (likely those <code>.grad</code> values carry partial legitimate chain contributions even though they "leak" past substep end).</p>
+</blockquote>
+<p>cross-substep <code>.grad</code> fields <strong>모두 legitimate chain input</strong> (consume + new-write 패턴 확인 — stage 9 cd_vel nonzero → stage 12 zero (fwd_velocity.grad 가 consume)). <em>naïve zero</em> 가 <em>backward chain input 끊김</em>.</p>
+<h3 id="strategy">Strategy 시도 종합<a class="headerlink" href="#strategy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>결과</th>
+<th>원인</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A1 (manual func_integrate_bw, step_2.grad replace)</td>
+<td>byte-exact identical</td>
+<td><em>step_2.grad 가 이미 정확</em> (verify_v2 explicit scalar PASS)</td>
+</tr>
+<tr>
+<td>A2 (split kernel)</td>
+<td>byte-exact identical</td>
+<td>동일</td>
+</tr>
+<tr>
+<td>qpos primal restore</td>
+<td>byte-exact identical</td>
+<td>Quadrants stash 가 forward 시점 primal 사용</td>
+</tr>
+<tr>
+<td>manual pre-call</td>
+<td>byte-exact identical</td>
+<td>Quadrants reverse 의 첫 op zero reset</td>
+</tr>
+<tr>
+<td><strong>Option 2 (forward intermediate temps)</strong></td>
+<td><strong>byte-exact identical</strong></td>
+<td>Quadrants compiler inline + FMA optimize</td>
+</tr>
+<tr>
+<td><strong>Option B2 simple zero (cross-substep)</strong></td>
+<td>broken — load_ckpt forward replay 가 reset trigger</td>
+<td>Genesis checkpoint mechanism interaction</td>
+</tr>
+<tr>
+<td><strong>Option C (selective zero with carrier backup)</strong></td>
+<td>dramatically worse</td>
+<td>cross-substep <code>.grad</code> 모두 legitimate</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_5">최종 결론<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<p><strong>J4 N&gt;=4 backward drift 의 fundamental root cause</strong>:</p>
+<ol>
+<li>
+<p><strong>Real source 확정</strong>: <code>transform_by_quat(arm_local, parent_quat)</code> chain with <strong>non-zero <code>arm_local</code></strong> (arm_x sensitivity 로 isolated, arm_x=0 → floor PASS, drift ∝ arm_local magnitude)</p>
+</li>
+<li>
+<p><strong>Numerical mechanism</strong>: backward chain의 <em>각 substep 별 <code>.grad</code> ops</em> 의 <em>수학적 reverse 식</em> 이 <em>forward 의 FMA-fusion-prone chain</em> 와 <em>FP arithmetic order divergence</em>. 각 substep 별 ~1e-12 numerical noise → N step cumulative → N=16 에서 1e-9 drift.</p>
+</li>
+<li>
+<p><strong>Drift 가 fixable 인 수치적 source 가 <em>아닌</em> 이유</strong>:<br />
+   - forward 의 FMA fusion: Quadrants compiler 가 automatic, intermediate temps 도 inline (Option 2 byte-exact)<br />
+   - manual reverse 의 explicit scalar: byte-exact (Suspect 2)<br />
+   - cross-substep <code>.grad</code> zero set: legitimate chain 끊김 (Option B2, C 둘 다 worse)<br />
+   - kernel-level manual replace: 효과 0% (A1, A2)</p>
+</li>
+</ol>
+<p>⇒ <strong>fundamental Quadrants AD / FP precision 한계</strong>. Genesis 의 <em>FMA-aware reverse</em> 와 <em>수학적 mathematical-clean reverse</em> 가 <em>수치적 분기</em>. 양자 모두 <em>FP64 floor 의 정확성</em>이고, <em>수정 가능한 silent drop 없음</em>.</p>
+<h3 id="genesis">실용 권장 (Genesis 사용자)<a class="headerlink" href="#genesis" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>N &lt;= 4</strong>: rel error ~1e-2 ~ 1e-4 (실용 적절)</li>
+<li><strong>N &gt;= 8 (J4-같은 FREE+revolute multi-link)</strong>: rel error 1.0+ catastrophic. <strong>이 사용 패턴 회피</strong>.</li>
+<li><strong>mitigation</strong>:</li>
+<li>dt 작게 (drift ∝ dt; 10x smaller → 1000x drift 감소)</li>
+<li>arm offset 작게 (drift ∝ |arm_local|)</li>
+<li>chain length 짧게</li>
+<li>가능하면 single-DOF / 단순 chain 사용</li>
+</ul>
+<h3 id="task-77-j4-n4-wrong-source">Task #77 (J4 N=4 wrong source 식별) — 완료<a class="headerlink" href="#task-77-j4-n4-wrong-source" title="Permanent link">&para;</a></h3>
+<ul>
+<li>✅ Real source 정확히 isolated (transform_by_quat with non-zero v)</li>
+<li>✅ Numerical mechanism 식별 (FMA vs mathematical reverse FP-order divergence)</li>
+<li>✅ 모든 fix strategy systematic 시도 + falsified</li>
+<li>✅ Genesis 의 수치적 stability 한계 문서화</li>
+</ul>
+<p><code>real wrong source</code> 가 <em>fundamental Quadrants AD limitation</em>. 추가 fix attempt 가 <em>productive 가 아닌 결론</em>.</p>
+<h2 id="revision-9-2026-05-14-option-2-byte-exact-identical-quadrants-fma-optimization-fundamental">REVISION 9 (2026-05-14): Option 2 byte-exact identical — Quadrants FMA optimization fundamental<a class="headerlink" href="#revision-9-2026-05-14-option-2-byte-exact-identical-quadrants-fma-optimization-fundamental" title="Permanent link">&para;</a></h2>
+<h3 id="option-2">Option 2 시도 결과<a class="headerlink" href="#option-2" title="Permanent link">&para;</a></h3>
+<p><code>qd_transform_by_quat</code> (geom.py:294) 의 <em>forward 식</em> 을 <em>intermediate temps 명시</em> + <em>explicit scalar mul-then-add</em> 로 재작성:</p>
+<div class="highlight"><pre><span></span><code><span class="n">m00</span> <span class="o">=</span> <span class="n">v0</span> <span class="o">*</span> <span class="n">R00</span><span class="p">;</span> <span class="n">m01</span> <span class="o">=</span> <span class="n">v1</span> <span class="o">*</span> <span class="n">R01</span><span class="p">;</span> <span class="n">m02</span> <span class="o">=</span> <span class="n">v2</span> <span class="o">*</span> <span class="n">R02</span>
+<span class="n">s00</span> <span class="o">=</span> <span class="n">m00</span> <span class="o">+</span> <span class="n">m01</span>
+<span class="n">out0</span> <span class="o">=</span> <span class="n">s00</span> <span class="o">+</span> <span class="n">m02</span>
+<span class="c1"># ... 동일 패턴 for out1, out2</span>
+</code></pre></div>
+
+<p>J4 N=16 sweep 결과: <strong>byte-exact identical</strong> (abs_diff: root_wz -3.918e-9 동일).</p>
+<p>⇒ <strong>Quadrants compiler 가 <em>intermediate temps 도 inline + FMA optimize</em></strong>. <em>forward FP order 변경 불가능</em>.</p>
+<h3 id="fundamental-quadrants-ad-fp-limitation">결론 — fundamental Quadrants AD / FP limitation<a class="headerlink" href="#fundamental-quadrants-ad-fp-limitation" title="Permanent link">&para;</a></h3>
+<p>지금까지 확인된 finding 종합:</p>
+<ol>
+<li><strong>수학적 root cause</strong>: <code>transform_by_quat(arm_local, parent_quat)</code> chain with non-zero <code>arm_local</code> (arm_x sensitivity test 로 isolated)</li>
+<li>
+<p><strong>수치적 정확성</strong> (모두 verified):<br />
+   - forward quat unit-norm: floor (4e-16)<br />
+   - kernel_manual_func_integrate_bw: FP64 floor (production state PASS)<br />
+   - kernel_manual_compute_qacc_bw: FP64 floor (production state PASS)<br />
+   - kernel_manual_uc_bw_one_link: isolated FD PASS<br />
+   - d_transform_by_quat__dq scalar 재작성: byte-exact (FMA 회피 안 됨)<br />
+   - forward qd_transform_by_quat intermediate temps: byte-exact (Quadrants inline)</p>
+</li>
+<li>
+<p><strong>수치적 cumulative drift</strong>:<br />
+   - dt ∝ drift (1000x 감소 with dt 10x smaller)<br />
+   - arm_local magnitude ∝ drift (linear)<br />
+   - N step ∝ drift (10x per N doubling for angular DOFs)</p>
+</li>
+</ol>
+<h3 id="fix">진정한 fix 가능 한 방향 (남은)<a class="headerlink" href="#fix" title="Permanent link">&para;</a></h3>
+<p><strong>Option A (가장 진정성, 큰 작업)</strong>: forward 와 reverse 둘 다 <em>동일 FP order 사용</em>. Quadrants 의 <em>automatic differentiation</em> 자체를 우회 — <em>manual forward + manual reverse</em> (둘 다 numpy-side computation). Genesis sim 의 <em>각 timestep forward</em> 도 numpy 로 작성 → <em>FMA 없이 strict IEEE 754 mul-then-add</em>.</p>
+<p>→ 실용 불가능 (성능 + 코드 양).</p>
+<p><strong>Option B (현실적)</strong>: drift 자체 <em>fundamental Quadrants AD / FMA 한계</em> 인정.<br />
+- J4 같은 <em>FREE + revolute multi-link entity</em> 의 <em>long-horizon backward (N&gt;=8)</em> 는 <em>수치적 drift inevitable</em><br />
+- 단순 시나리오 (J1, J5_chain3 등) 는 <em>floor PASS</em><br />
+- 실용적 권장:<br />
+  - N 짧게 (N&lt;=4 까지는 rel error 작음)<br />
+  - dt 작게 (drift ∝ dt)<br />
+  - arm offset 작게 (drift ∝ arm_local)</p>
+<p><strong>Option C (실험적)</strong>: <em>각 substep 끝</em> 에 <em>cross-substep .grad scrub</em>. 단 <em>legitimate vs leak</em> 분리 어려움 (이전 author 코멘트 line 1530-1541). 추가 진단 필요.</p>
+<h3 id="action-items-session">Action items 정리 (다음 session)<a class="headerlink" href="#action-items-session" title="Permanent link">&para;</a></h3>
+<p>진정한 fix 가능 한 <em>novel hypothesis</em> 가 <em>없으면</em> — <em>option B (인정)</em> 가 <em>결론</em>. <em>option C (cross-substep selective scrub)</em> 가 <em>마지막 시도 가치</em>.</p>
+<p>다음 session 의 우선 작업:<br />
+1. <em>Option C exploration</em>: 각 cross-substep <code>.grad</code> field 별 <em>legitimate (chain contribution) vs leak (cumulative drift)</em> 분류 — <em>각 field 마다 zero set + N=16 sweep 측정</em> (1 field 씩, ~30 fields × ~30초 = 약 15분).<br />
+2. Drift 감소 fields 식별 → <em>selective scrub kernel</em> 작성.</p>
+<h3 id="code-state-option-2">Code state (option 2 시도 후)<a class="headerlink" href="#code-state-option-2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>qd_transform_by_quat</code> (geom.py:294): clean revert (byte-exact, 효과 없음)</li>
+<li>모든 manual kernels framework 유지</li>
+</ul>
+<h2 id="revision-8-2026-05-14-drift-source-isolated-transform_by_quat-reverse-fp-order-diff">REVISION 8 (2026-05-14): drift source isolated — <code>transform_by_quat</code> reverse 의 FP order diff<a class="headerlink" href="#revision-8-2026-05-14-drift-source-isolated-transform_by_quat-reverse-fp-order-diff" title="Permanent link">&para;</a></h2>
+<h3 id="_6">결정적 진단 단계<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Suspect 1 (forward quat unit-norm drift) FALSIFIED</strong>:<br />
+   - <code>/tmp/diag_quat_norm_drift.py</code>: J4 N=16 forward 의 chassis_quat <code>||quat||</code> drift = <strong>4.4e-16</strong> (FP64 floor, ~0.4 ulp)<br />
+   - forward quat normalization 깨짐 <em>아님</em></p>
+</li>
+<li>
+<p><strong>Suspect 2 (<code>d_transform_by_quat__dq</code> Vector arithmetic) FALSIFIED</strong>:<br />
+   - explicit scalar form + intermediate temps 변경 → production output <strong>byte-exact identical</strong><br />
+   - FMA fusion 영향 <em>없음</em> (compiler 가 temp 도 inline + FMA, or 원래 FMA 가 없음)</p>
+</li>
+<li>
+<p><strong>arm inertia (ill-conditioning) FALSIFIED</strong>:<br />
+   - arm_inertia ∈ {1e-2, 1e-3, 1e-4, 9.7e-5, 2.2e-3} → drift 거의 동일 (3.9e-9 ~ 4.7e-9)</p>
+</li>
+<li>
+<p><strong>arm offset sensitivity — DECISIVE</strong>:</p>
+</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>arm_x</th>
+<th>N=16 abs_diff</th>
+<th>rel_max</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0.00</strong></td>
+<td><strong>1.85e-11</strong></td>
+<td><strong>3.3e-3 (FLOOR)</strong></td>
+</tr>
+<tr>
+<td>0.05</td>
+<td>7.93e-10</td>
+<td>0.36</td>
+</tr>
+<tr>
+<td>0.20</td>
+<td>3.92e-9</td>
+<td>1.45</td>
+</tr>
+<tr>
+<td>0.50</td>
+<td>9.58e-9</td>
+<td>0.52</td>
+</tr>
+<tr>
+<td>1.00</td>
+<td>1.26e-8</td>
+<td>0.25</td>
+</tr>
+</tbody>
+</table>
+<p>⇒ <strong>drift ∝ arm_local magnitude</strong>. <strong>arm_x=0 floor PASS</strong>.</p>
+<h3 id="real-source">Real source<a class="headerlink" href="#real-source" title="Permanent link">&para;</a></h3>
+<p><strong><code>d_transform_by_quat__dq(v, quat, out_grad)</code> 가 <em>v 의 magnitude 와 비례 한 *수치적 drift introduce</em></strong>:<br />
+- <code>v</code> (= <code>arm_local</code>) 가 작을수록 drift 작음<br />
+- <code>v=0</code> 시 <em>backward contribution 자체 0</em> → drift 없음<br />
+- <code>v&gt;0</code> 시 <em>각 backward substep 별 </em>수치적 small error introduced* → N step 누적</p>
+<h3 id="forward-fma-vs-manual-reverse-fp-order-divergence">의미 — forward FMA vs manual reverse의 FP order divergence<a class="headerlink" href="#forward-fma-vs-manual-reverse-fp-order-divergence" title="Permanent link">&para;</a></h3>
+<p>forward (<code>qd_transform_by_quat</code>, geom.py line 317):</p>
+<div class="highlight"><pre><span></span><code>out[0] = v0 * (q_xx + q_ww - q_yy - q_zz) + v1 * (2*q_xy - 2*q_wz) + v2 * (2*q_xz + 2*q_wy)
+</code></pre></div>
+
+<p>→ Quadrants 가 <em>3 mul + 2 add chain</em> 으로 <em>FMA fusion 가능</em>.</p>
+<p>manual reverse (<code>d_transform_by_quat__dq</code>):</p>
+<div class="highlight"><pre><span></span><code>∂L/∂qw = og0 * 2*(qw*v0 - qz*v1 + qy*v2) + og1 * 2*(qz*v0 + qw*v1 - qx*v2) + og2 * 2*(-qy*v0 + qx*v1 + qw*v2)
+</code></pre></div>
+
+<p>→ <em>수학적 reverse</em> — <em>forward 의 FMA FP order 와 </em>수치적 다른 식*.</p>
+<p><strong>수학적으로 동치</strong> 이지만 <em>FP arithmetic 의 </em>수치적 결과 diff*. v 가 작을수록 contribution 작 → drift 작음. v=0 시 모든 contribution 0 → drift 0.</p>
+<h3 id="fix_1">진정한 fix 방향<a class="headerlink" href="#fix_1" title="Permanent link">&para;</a></h3>
+<p><strong>Option 1 (가장 진정)</strong>: backward chain 의 <code>d_transform_by_quat__dq</code> 를 <em>forward 와 동일 FP order</em> 사용 reverse 로 재작성. forward 의 각 식의 <em>각 term</em> 별 <em>수치적 reverse</em> (forward FMA chain 의 <em>부분 미분 + same FP rounding sequence</em>).</p>
+<p><strong>Option 2</strong>: forward <code>qd_transform_by_quat</code> 를 <em>FMA fusion 어렵게</em> 재작성 (intermediate temp 명시). 그러면 forward 의 FP order 가 <em>manual reverse 와 일치</em>. backward chain 자동 일치.</p>
+<p><strong>Option 3 (실용)</strong>: Genesis 의 multi-link FK chain 의 <em>수치적 accuracy 한계 인정</em>. dt 작게 + multi-step backward 시 <em>drift 가능</em> 알림.</p>
+<h3 id="verification">단순 verification (즉시 가능)<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h3>
+<p><strong>Option 2 시도</strong>: <code>qd_transform_by_quat</code> (geom.py:294) 의 <em>intermediate temps</em> 추가:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ax_w</span> <span class="o">=</span> <span class="n">q_xx</span> <span class="o">+</span> <span class="n">q_ww</span> <span class="o">-</span> <span class="n">q_yy</span> <span class="o">-</span> <span class="n">q_zz</span>
+<span class="n">ax_y</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">q_xy</span> <span class="o">-</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">q_wz</span>
+<span class="n">ax_z</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">q_xz</span> <span class="o">+</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">q_wy</span>
+<span class="n">out0_x</span> <span class="o">=</span> <span class="n">v0</span> <span class="o">*</span> <span class="n">ax_w</span>
+<span class="n">out0_y</span> <span class="o">=</span> <span class="n">v1</span> <span class="o">*</span> <span class="n">ax_y</span>
+<span class="n">out0_z</span> <span class="o">=</span> <span class="n">v2</span> <span class="o">*</span> <span class="n">ax_z</span>
+<span class="n">out_x</span> <span class="o">=</span> <span class="n">out0_x</span> <span class="o">+</span> <span class="n">out0_y</span> <span class="o">+</span> <span class="n">out0_z</span>
+<span class="c1"># ... etc</span>
+</code></pre></div>
+
+<p>→ J4 N=16 sweep 측정. drift 감소 시 → forward FMA 가 source confirmed.</p>
+<h3 id="recommended-next-session-work">Recommended next session work<a class="headerlink" href="#recommended-next-session-work" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Option 2 (forward intermediate temp) 시도</strong> — <em>수정 시도 가능 한 </em>test*. drift 변화 측정.</li>
+<li>Option 2 FAIL 시 → <strong>Option 1</strong> (manual reverse 의 <em>수치적 forward-aware 형식 작성</em>) 시도. 큰 작업.</li>
+<li><em><em><code>kernel_forward_velocity_one_link.grad</code> 의 </em>수치적 reverse 도 </em>transform_by_quat 의존*. 동일 issue 가능 — 동일 fix 적용.</li>
+</ol>
+<h2 id="revision-7-2026-05-14-option-b3-detailed-verify-drift-dt-systematic-wrong-identified">REVISION 7 (2026-05-14): option B3 detailed verify — drift ∝ dt, systematic wrong identified<a class="headerlink" href="#revision-7-2026-05-14-option-b3-detailed-verify-drift-dt-systematic-wrong-identified" title="Permanent link">&para;</a></h2>
+<h3 id="_7">진단 결과<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Deterministic confirmed</strong> (<code>/tmp/diag_determinism.py</code>): 동일 input 두 번 실행 → byte-exact identical. FP order non-determinism 아님.</p>
+</li>
+<li>
+<p><strong>Topology N progression</strong> (<code>/tmp/diag_all_topo_n_progression.py</code>, <code>diag_all_topo_relerror_sweep.py</code>):<br />
+   - J1_free (single FREE 6 DOFs): N=16 rel 3.6e-11 (FP64 floor)<br />
+   - J2_revolute, J3_prismatic: floor or 0<br />
+   - J5_chain3 (3 revolutes chain): N=16 rel 1.5e-5 (floor)<br />
+   - <strong>J4_free_rev (FREE + revolute multi-link): N=16 rel 13.25 (catastrophic)</strong><br />
+   - ⇒ wrong source = FREE + revolute multi-link interaction (FK chain의 transform_by_quat)</p>
+</li>
+<li>
+<p><strong>dt sensitivity</strong> (J4 N=16, <code>/tmp/diag_dt_sensitivity.py</code>):</p>
+</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>dt</th>
+<th>abs_diff</th>
+<th>rel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1e-2</td>
+<td>3.9e-9</td>
+<td>1.45</td>
+</tr>
+<tr>
+<td>5e-3</td>
+<td>6.3e-11</td>
+<td>1.31</td>
+</tr>
+<tr>
+<td>1e-3</td>
+<td>5e-12</td>
+<td>1.00</td>
+</tr>
+</tbody>
+</table>
+<p>→ <strong>drift ∝ dt (1000x 감소 with 10x smaller dt)</strong>. forward dynamics cumulative numerical magnitude 가 source. rel 유지 ~1.0 → systematic 수학적 wrong (fixable, not FP floor).</p>
+<h3 id="session-top-suspects">다음 session 의 top suspects<a class="headerlink" href="#session-top-suspects" title="Permanent link">&para;</a></h3>
+<p><strong>Suspect 1: forward chain quat unit-norm drift</strong><br />
+- <code>qd_transform_quat_by_quat</code> (geom.py line 281-290) 가 <em>의도적으로 normalize 안 함</em> (line 286 코멘트: backward chain attenuation 방지 — <code>.normalized()</code> 가 tangent-space projection 으로 w-direction 의 chain 차단).<br />
+- <em>multi-step accumulation 시 unit-norm 깨짐</em> → cumulative numerical error.<br />
+- 검증: forward 자체에 <em>normalize 추가</em> (개념적, backward 영향 받음 알고) → drift 변화 측정.<br />
+- <em>trade-off</em>: normalize 추가 시 <em>backward chain 의 w-component attenuation</em> 다시 발생 → 다른 wrong source. 신중 평가.</p>
+<p><strong>Suspect 2: <code>kernel_manual_uc_bw_one_link</code> 의 <code>d_transform_by_quat__dq</code> 의 Vector arithmetic</strong><br />
+- J4 chain core: <code>parent_quat.grad</code> 5 sources 누적<br />
+- 각 source = <code>d_transform_by_quat__dq</code> Vector return (3 mul + 2 add per element)<br />
+- Quadrants compiler FMA fusion 의심<br />
+- 검증: <code>d_transform_by_quat__dq</code> 의 내부 식 <em>explicit scalar mul-then-add</em> 로 재작성 → verify_v2 패턴<br />
+- production output 변화 측정 (manual numpy explicit scalar 와 byte-exact 인지)</p>
+<p><strong>Suspect 3: Quadrants <code>kernel_forward_velocity_one_link.grad</code> (Quadrants AD)</strong><br />
+- Vector arithmetic 의 FMA fusion 가능<br />
+- <code>cd_vel</code>, <code>cd_ang</code> chain 의 <em>cross-link transform_by_quat reverse</em> 가 핵심<br />
+- 검증: manual replace + production output 비교</p>
+<h3 id="recommended-next-session-work-order">Recommended next session work order<a class="headerlink" href="#recommended-next-session-work-order" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Suspect 2 먼저</strong> (가장 self-contained, 측정 가능):<br />
+   - <code>d_transform_by_quat__dq</code> 의 explicit scalar 재작성<br />
+   - J4 N=2 sweep 측정 → 변화 확인</li>
+<li><strong>Suspect 3 다음</strong>:<br />
+   - <code>kernel_forward_velocity_one_link</code> 의 <code>kernel_manual_forward_velocity_bw</code> 작성 (없음)<br />
+   - production verify (verify_v2 패턴)</li>
+<li><strong>Suspect 1 마지막</strong> (위 둘이 PASS 면):<br />
+   - forward normalize trade-off 실험</li>
+</ol>
+<h2 id="revision-6-2026-05-14-option-b2-simple-zero-falsified-genesis-checkpoint-interaction">REVISION 6 (2026-05-14): option B2 simple zero falsified — Genesis checkpoint interaction<a class="headerlink" href="#revision-6-2026-05-14-option-b2-simple-zero-falsified-genesis-checkpoint-interaction" title="Permanent link">&para;</a></h2>
+<h3 id="option-b2-implementation">Option B2 implementation 시도<a class="headerlink" href="#option-b2-implementation" title="Permanent link">&para;</a></h3>
+<p><code>substep_pre_coupling_grad</code> 진입 시 <em>모든 cross-substep <code>.grad</code> fields zero set</em> (qpos/vel/qpos_next/vel_next.grad 만 보존):</p>
+<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;_first_bw_done&#39;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+    <span class="c1"># backup primary carriers, zero all, restore</span>
+    <span class="o">...</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">_first_bw_done</span> <span class="o">=</span> <span class="kc">True</span>
+</code></pre></div>
+
+<h3 id="_8">결과<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<p><strong>zero apply 한 번도 실행 안 됨</strong> — <code>_first_bw_done = False</code> 가 <em>매 backward substep 진입</em> 시 reset.</p>
+<p>원인 발견: <strong>Genesis 의 <em>checkpoint mechanism</em></strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># simulator.py:298 _step_grad():</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_step_grad</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_substeps</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">cur_substep_local</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">load_ckpt</span><span class="p">()</span>  <span class="c1"># → self.step(in_backward=True) → self.substep()</span>
+        <span class="o">...</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sub_step_grad</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cur_substep_local</span><span class="p">)</span>  <span class="c1"># substep_pre_coupling_grad</span>
+</code></pre></div>
+
+<p>⇒ <strong>각 outer backward step 마다 <em>load_ckpt 가 full forward replay</em></strong>. 그 안 <code>self.substep</code> 호출 → 우리 reset condition <code>if not self._is_backward</code> trigger (<code>self._is_backward=False</code> 상태 — <code>load_ckpt</code>의 forward replay 모드). <code>_first_bw_done = False reset</code>. <em>zero apply 실행 안 됨</em>.</p>
+<h3 id="author-finding-line-1530-1541">이전 author 의 동일 finding (line 1530-1541 코멘트)<a class="headerlink" href="#author-finding-line-1530-1541" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>Naively zeroing the candidate fields here did NOT recover J1 multistep precision
+(likely those `.grad` values carry partial legitimate chain contributions even
+though they &quot;leak&quot; past substep end). Identifying the exact leaking field set
+is tracked as a follow-up.
+</code></pre></div>
+
+<p>⇒ <strong>option B2 simple zero 는 <em>이미 알려진 falsified strategy</em></strong>. <code>.grad</code> fields 가 <em>partial legitimate cross-substep chain contribution</em> 포함 → 전부 zero 시 backward chain 끊김.</p>
+<h3 id="genesis-checkpoint-mechanism">Genesis checkpoint mechanism 의 의미<a class="headerlink" href="#genesis-checkpoint-mechanism" title="Permanent link">&para;</a></h3>
+<p>각 outer backward step 의 <code>load_ckpt</code> → <code>self.step(in_backward=True) × N</code>:<br />
+- <em>primal state</em> (qpos, vel, etc.): checkpoint load + N steps forward replay.<br />
+- <em><code>.grad</code> attribute</em>: load 안 함, <em>이전 backward chain 의 마지막 값 그대로 유지</em>.</p>
+<p>즉 <em>forward stash 는 매 backward outer step 마다 </em>재생성<em>. </em>.grad attribute 는 <em>cumulative carry over</em>.</p>
+<p><strong>가설</strong>: cumulative drift 의 source 가 <em>각 backward outer step 의 </em>load_ckpt forward replay 의 <em>FP order 변동</em>. Quadrants FMA optimization 이 <em>call 별 다른 FP order</em> 사용 가능 (parallel execution / atomic ops 순서 등).</p>
+<p>검증 어려움.</p>
+<h3 id="option-b3-simplified-2026-05-14">Option B3 simplified 진행 결과 (2026-05-14)<a class="headerlink" href="#option-b3-simplified-2026-05-14" title="Permanent link">&para;</a></h3>
+<p><code>/tmp/diag_all_topo_n_progression.py</code> 측정 (Richardson FD vs ana, seed 1000 t=0):</p>
+<table>
+<thead>
+<tr>
+<th>Topology</th>
+<th>N=1 abs_diff</th>
+<th>N=16 abs_diff</th>
+<th>N=16 |ana|</th>
+<th>N=16 rel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>J1_free (single FREE 6 DOFs)</td>
+<td>2.10e-19</td>
+<td>1.46e-11</td>
+<td>5.3e-6</td>
+<td>3e-6 (floor)</td>
+</tr>
+<tr>
+<td>J4_free_rev (FREE + revolute 7 DOFs)</td>
+<td>6.49e-13</td>
+<td>4e-9 (root_wz)</td>
+<td>3e-8</td>
+<td><strong>0.13</strong> (real wrong)</td>
+</tr>
+</tbody>
+</table>
+<p>(<code>diag_all_topo_relerror_sweep.py</code> 의 기존 결과로부터)</p>
+<table>
+<thead>
+<tr>
+<th>Topology</th>
+<th>N=16 max rel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>J1_free</td>
+<td>3.6e-11 (FP64 floor)</td>
+</tr>
+<tr>
+<td>J2_revolute</td>
+<td>0 (deterministic exact)</td>
+</tr>
+<tr>
+<td>J3_prismatic</td>
+<td>5.6e-12 (FP64 floor)</td>
+</tr>
+<tr>
+<td><strong>J4_free_rev</strong></td>
+<td><strong>13.25</strong> (CATASTROPHIC)</td>
+</tr>
+<tr>
+<td>J5_chain3 (3 revolutes chain)</td>
+<td>1.5e-5 (floor)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="finding">결정적 finding<a class="headerlink" href="#finding" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>single FREE (J1) PASS</strong>: cross-substep drift 없음, FP64 floor 유지.</li>
+<li><strong>chain of revolutes (J5_chain3) PASS</strong>: multi-link revolute chain 도 floor 유지.</li>
+<li><strong>FREE + revolute (J4) WRONG</strong>: <strong>유일한 catastrophic 케이스</strong>.</li>
+</ul>
+<p>⇒ wrong source 가 <strong>FREE + revolute multi-link interaction</strong>. 단순 FREE 도, 단순 revolute chain 도 아닌 <em>FREE joint 의 quat update 와 </em>revolute child link 의 <em>forward kinematic chain interaction</em>.</p>
+<h3 id="session-work">다음 session 우선 work<a class="headerlink" href="#session-work" title="Permanent link">&para;</a></h3>
+<p><strong>구체 chain 분석</strong>: J4 의 forward chain 가:</p>
+<div class="highlight"><pre><span></span><code>chassis_pos = qpos[0:3]
+chassis_quat = qpos[3:7]
+arm_pos = chassis_pos + R(chassis_quat) @ arm_local
+arm_quat = chassis_quat ⊗ qloc(arm_revolute_angle)
+</code></pre></div>
+
+<p>backward chain:<br />
+- <code>arm_pos.grad → chassis_pos.grad + chassis_quat.grad (via d_transform_by_quat__dq)</code><br />
+- <code>arm_quat.grad → chassis_quat.grad (via d_quat_mul) + qloc.grad (revolute axis)</code></p>
+<p>→ <strong>chassis_quat.grad chain</strong> 의 <em>각 substep 별 </em>수치적 drift cumulative*.</p>
+<p><strong>확인 방법</strong>:<br />
+1. J4 의 backward chain 의 <em>각 .grad call output capture</em> (forward_velocity_one_link.grad, COM_links.grad, update_cartesian_space.grad — 모두 manual or split).<br />
+2. 각 stage 에서 <em>production output vs explicit-scalar manual numpy</em> 비교.<br />
+3. <em>어느 stage 의 </em>chassis_quat.grad chain<em> 이 </em>수치적 silent drop 발생*.</p>
+<p><code>kernel_manual_uc_bw_one_link</code> (FK Jacobian-transpose, manual_bw.py) 가 <em>유력한 source</em> — <code>d_transform_by_quat__dq</code> 의 <em>FP order</em>.</p>
+<h3 id="codebase-state">Codebase state<a class="headerlink" href="#codebase-state" title="Permanent link">&para;</a></h3>
+<p><code>kernel_manual_func_integrate_bw</code> (scalar) + <code>kernel_manual_compute_qacc_bw</code> (LDLT) 모두 <em>production verify PASS</em>. wrong source 가 <em>이 두 kernel 외 chain</em>.</p>
+<h3 id="option-b2">코드 상태 (option B2 시도 후)<a class="headerlink" href="#option-b2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>rigid_solver.py: clean revert</li>
+<li>Strategy A1 implementation (<code>kernel_manual_func_integrate_bw</code> 호출) 도 revert</li>
+<li><em>all manual kernels (manual_bw.py, forward_dynamics.py 의 standalone wrappers)</em> 는 유지 (framework + diag scripts)</li>
+</ul>
+<h2 id="revision-5-2026-05-14-real-source-cross-substep-cumulative-drift">REVISION 5 (2026-05-14): real source = cross-substep cumulative drift<a class="headerlink" href="#revision-5-2026-05-14-real-source-cross-substep-cumulative-drift" title="Permanent link">&para;</a></h2>
+<h3 id="4">결정적 진단 4 단계<a class="headerlink" href="#4" title="Permanent link">&para;</a></h3>
+<p><strong>Step 1</strong>: verify_v2 의 manual numpy 식 <em>explicit scalar + captured vel_next</em> 로 재작성 → production kernel_step_2.grad 와 <em>byte-exact PASS</em> (qpos.grad max|d| 2.78e-17, vel/acc 0). silent drop 가설 <em>완전 falsified</em>.</p>
+<p><strong>Step 2</strong>: J4 N=16 Richardson extrapolation FD (h=1e-5, h=5e-6 → O(h^4) FD floor ~1e-15) vs ana:<br />
+- root_wz: abs_diff <strong>4e-9</strong> (real wrong)<br />
+- root_wx: abs_diff <strong>1.8e-9</strong> (real wrong)<br />
+- root_wy: abs_diff <strong>5e-10</strong> (real wrong)<br />
+- root_x: abs_diff ~1e-12 (FP64 floor)</p>
+<p>→ <strong>real systematic wrong 확정</strong>. FD precision artifact 아님.</p>
+<p><strong>Step 3</strong>: N별 abs_diff progression (seed 1000 t=0, J4):</p>
+<table>
+<thead>
+<tr>
+<th>DOF</th>
+<th>N=1</th>
+<th>N=2</th>
+<th>N=4</th>
+<th>N=8</th>
+<th>N=16</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>root_x</td>
+<td>7e-13</td>
+<td>1e-12</td>
+<td>2e-13</td>
+<td>1e-12</td>
+<td>1e-12</td>
+</tr>
+<tr>
+<td>root_y</td>
+<td>2e-13</td>
+<td>3e-12</td>
+<td>3e-12</td>
+<td>7e-11</td>
+<td>6e-11</td>
+</tr>
+<tr>
+<td>root_z</td>
+<td>1e-14</td>
+<td>6e-14</td>
+<td>8e-12</td>
+<td>4e-12</td>
+<td>4e-11</td>
+</tr>
+<tr>
+<td><strong>root_wx</strong></td>
+<td>6e-13</td>
+<td>3e-12</td>
+<td>3e-11</td>
+<td>1e-10</td>
+<td><strong>1.8e-9</strong></td>
+</tr>
+<tr>
+<td><strong>root_wy</strong></td>
+<td>8e-13</td>
+<td>3e-12</td>
+<td>7e-11</td>
+<td>2e-11</td>
+<td><strong>5e-10</strong></td>
+</tr>
+<tr>
+<td><strong>root_wz</strong></td>
+<td>3e-13</td>
+<td>1e-11</td>
+<td>2e-11</td>
+<td>8e-10</td>
+<td><strong>4e-9</strong></td>
+</tr>
+<tr>
+<td>arm_rev</td>
+<td>4e-14</td>
+<td>1e-11</td>
+<td>3e-11</td>
+<td>2e-10</td>
+<td>4e-10</td>
+</tr>
+</tbody>
+</table>
+<p>→ <strong>N=1 은 FP64 floor</strong> (1e-13). <strong>약 10x per N doubling</strong> for angular DOFs. cumulative drift.</p>
+<p><strong>Step 4</strong>: <strong>N=1 single backward vs N=2 t=1 backward (first in LIFO)</strong> byte-exact identical (<code>/tmp/diag_n2_t1_vs_n1.py</code>):<br />
+- 모든 DOFs abs_diff = <strong>0.000e+00</strong></p>
+<p>→ <strong>single substep backward 자체는 정확</strong>. <strong>wrong source 가 <em>cross-substep state propagation</em></strong> (t=1 → t=0 의 누적).</p>
+<p><strong>Step 5 (보너스)</strong>: <code>kernel_manual_compute_qacc_bw</code> production state verify PASS (max|d| <strong>4.96e-24</strong>, FP64 floor). LDLT IFT manual 가 byte-exact 동작.</p>
+<h3 id="real-wrong-source">Real wrong source 정확한 위치<a class="headerlink" href="#real-wrong-source" title="Permanent link">&para;</a></h3>
+<p>cross-substep state propagation:<br />
+- <code>kernel_prepare_backward_substep</code> 의 <code>func_copy_next_to_curr_grad</code>: <em>qpos.grad → qpos_next.grad swap + zero</em>, <em>vel.grad → vel_next.grad swap + zero</em><br />
+- <strong>다른 <code>.grad</code> fields (cd_*, cinr_*, cdof_*, cdofd_*, crb_*, mass_mat 등) 의 <em>.grad 는 *명시적 zero 안 됨</em></strong><br />
+- 이들이 <em>cross-substep carry over</em> → <em>fields-level chain</em> 에서 <em>수치적 cumulative drift 누적</em></p>
+<p>dump 결과 <em>Stage 0 (f=0 ENTRY before prepare)</em>: <code>links_state.pos.grad</code> 가 <em>nonzero value (이전 substep 의 cumulative)</em>.</p>
+<h3 id="strategy-0">Strategy 회고 — 모든 시도가 효과 0% 였던 이유 최종<a class="headerlink" href="#strategy-0" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A1 (step_2.grad manual replace)</td>
+<td>byte-exact identical</td>
+</tr>
+<tr>
+<td>A2 (split kernel)</td>
+<td>byte-exact identical</td>
+</tr>
+<tr>
+<td>qpos primal restore</td>
+<td>byte-exact identical</td>
+</tr>
+<tr>
+<td>manual pre-call</td>
+<td>byte-exact identical</td>
+</tr>
+</tbody>
+</table>
+<p>⇒ <strong>모든 시도가 <em>substep 내부</em> 의 <em>step_2.grad</em> 만 fix 시도</strong>. <em>substep 내부 backward 는 이미 정확</em>. <em>real source 는 </em>substep 외부 (cross-substep)*.</p>
+<h3 id="session-work_1">다음 session 우선 work<a class="headerlink" href="#session-work_1" title="Permanent link">&para;</a></h3>
+<p><strong>option B1 (구조적)</strong>: cross-substep <code>.grad</code> zero set 추가. <code>func_copy_next_to_curr_grad</code> 에 <em>모든 .grad fields zero set</em> 추가:</p>
+<div class="highlight"><pre><span></span><code><span class="k">for</span> <span class="n">i_l</span><span class="p">,</span> <span class="n">i_b</span> <span class="ow">in</span> <span class="o">...</span><span class="p">:</span>
+    <span class="n">links_state</span><span class="o">.</span><span class="n">cd_vel</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_l</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">links_state</span><span class="o">.</span><span class="n">cd_ang</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_l</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">links_state</span><span class="o">.</span><span class="n">cinr_pos</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_l</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="c1"># etc.</span>
+<span class="k">for</span> <span class="n">i_d</span><span class="p">,</span> <span class="n">i_b</span> <span class="ow">in</span> <span class="o">...</span><span class="p">:</span>
+    <span class="n">dofs_state</span><span class="o">.</span><span class="n">cdof_vel</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_d</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">dofs_state</span><span class="o">.</span><span class="n">cdof_ang</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_d</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">dofs_state</span><span class="o">.</span><span class="n">cdofd_vel</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_d</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">dofs_state</span><span class="o">.</span><span class="n">cdofd_ang</span><span class="o">.</span><span class="n">grad</span><span class="p">[</span><span class="n">i_d</span><span class="p">,</span> <span class="n">i_b</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="c1"># etc.</span>
+</code></pre></div>
+
+<p><strong>WARNING</strong>: 일부 <code>.grad</code> field 는 <em>legitimate cross-substep chain contribution</em> — <em>전부 zero set 시 chain 끊김 → wrong increase</em>. 어느 fields 가 <em>legitimate accumulate</em> vs <em>leak</em> 인지 분석 필요.</p>
+<p><strong>option B2 (진단)</strong>: N=2 의 <em>t=1 backward 끝</em> + <em>t=0 backward 시작</em> 사이 <code>.grad</code> field 값 dump. <em>어느 fields 가 </em>nonzero carry over*. legitimate vs leak 분석. dump tag 추가 + 측정.</p>
+<p><strong>option B3 (manual replace 확장)</strong>: 남은 Quadrants <code>.grad</code> calls (bias_force / update_acc / torque / mm_<em>) 도 manual replace. </em>cross-substep 의 <em>Quadrants chain 끊고 manual chain 만</em>. 매우 invasive.</p>
+<p>권장: <strong>B2 (진단) 먼저</strong> → legitimate vs leak fields 식별 → B1 적용.</p>
+<h2 id="old-handoff-revision-5-obsolete">OLD HANDOFF — REVISION 5 가 OBSOLETE 으로 만듦<a class="headerlink" href="#old-handoff-revision-5-obsolete" title="Permanent link">&para;</a></h2>
+<h2 id="decisive-finding-2026-05-14-revision-4-silent-drop-falsified">DECISIVE FINDING (2026-05-14, revision 4): silent drop 가설 자체 FALSIFIED<a class="headerlink" href="#decisive-finding-2026-05-14-revision-4-silent-drop-falsified" title="Permanent link">&para;</a></h2>
+<h3 id="chain">진단 chain<a class="headerlink" href="#chain" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>kernel_manual_func_integrate_bw</code> 를 <em>scalar arithmetic + intermediate temps</em> 로 재작성 (qd.Vector / FMA fusion 회피 시도).</li>
+<li><code>notes/diag_manual_kernel_prod_state.py</code>: production state capture → standalone solver inject → manual kernel 호출 → manual numpy (explicit scalar) 비교.</li>
+</ol>
+<p>결과:<br />
+| Source | qpos.grad[5] | vel.grad[wy] |<br />
+|---|---|---|<br />
+| production kernel_step_2.grad | -9.10520619e-05 | -7.13884811e-07 |<br />
+| <strong>our manual kernel (scalar)</strong> | <strong>-9.10520619e-05</strong> | <strong>-7.13884811e-07</strong> |<br />
+| <strong>manual numpy (explicit scalar)</strong> | <strong>-9.10520619e-05</strong> | <strong>-7.13884811e-07</strong> |<br />
+| verify_v2 "manual numpy" (matrix <code>J_a.T @ v</code>) | -9.10543463e-05 | -7.13896234e-07 |</p>
+<p>⇒ <strong>production kernel_step_2.grad = our manual kernel = manual numpy (explicit scalar)</strong>.</p>
+<p><code>diag_j4_n2_step2_bw_verify.py</code> 의 <em>"silent drop" 1.14e-11 (vel) / 2.28e-09 (qpos)</em> 는 <em>measurement 식의 FP order 차이</em> 였음:<br />
+- verify_v2 의 <em>manual numpy</em> = <code>J_a.T @ qpos_next_grad_rot</code> (matrix multiply — BLAS FMA 가능)<br />
+- production kernel_step_2.grad = explicit scalar mul-then-add (numpy 와 동일 FP order)<br />
+- 두 식이 <em>수학적으로 동일</em> 이지만 <em>FP 순서 다름</em> → 수치적 ~1e-11 diff</p>
+<h3 id="strategy-a1-a2">Strategy A1, A2 시도들의 의미 재해석<a class="headerlink" href="#strategy-a1-a2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>효과</th>
+<th>새로운 해석</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A1 (manual kernel)</td>
+<td>0%</td>
+<td>production output 가 <em>이미 manual numpy (FP-correct)</em> — manual 호출이 같은 값 write</td>
+</tr>
+<tr>
+<td>A2 (split kernel)</td>
+<td>0%</td>
+<td>동일</td>
+</tr>
+<tr>
+<td>qpos primal restore</td>
+<td>0%</td>
+<td>step_2 forward stash 가 <em>이미 correct primal</em></td>
+</tr>
+<tr>
+<td>manual pre-call</td>
+<td>0%</td>
+<td>step_2 reverse 가 <em>이미 correct chain</em></td>
+</tr>
+</tbody>
+</table>
+<p>⇒ <strong>모든 Strategy 가 <em>없는 silent drop 을 fix 시도</em></strong>. 그래서 byte-exact identical.</p>
+<h3 id="real-wrong-source-step_2grad">Real wrong source 는 step_2.grad 가 아님<a class="headerlink" href="#real-wrong-source-step_2grad" title="Permanent link">&para;</a></h3>
+<p>J4 N&gt;=4 wrong sweep (N=8: max rel 6.5, N=16: 13.25) 는 <em>real source 가 다른 chain</em>:<br />
+- compute_qacc.grad (이미 manual <code>kernel_manual_compute_qacc_bw</code> — isolated PASS but production verify 안 함)<br />
+- bias_force.grad / update_acc.grad / torque_and_passive_force.grad<br />
+- mm_armature.grad / mm_compute_f.grad / mm_crb_initialize.grad / mm_implicit_damping_corr.grad<br />
+- update_force.grad (manual, isolated PASS)<br />
+- COM_links.grad (manual, isolated PASS)<br />
+- forward_velocity_one_link.grad (isolated PASS)<br />
+- update_cartesian_space.grad (manual_uc_bw, isolated PASS)</p>
+<p>isolated PASS 한 항목들도 <em>production self.substep replay 안에서 </em>manual numpy 와 동일 output 인지 확인 필요<em> (verify_v2 같은 측정 기법 — </em>단 <em>manual numpy 식 가 explicit scalar 인지 verify 후</em>).</p>
+<h3 id="session-work_2">다음 session 우선 work<a class="headerlink" href="#session-work_2" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>각 <code>.grad</code> call 의 <em>production output capture<em> + </em>manual numpy (explicit scalar) 와 비교</em></strong>. <em>isolated PASS 한 항목들도 </em>production verify*. 진정한 silent drop 위치 식별.</p>
+</li>
+<li>
+<p><strong>FD 측정 자체의 FP order 검토</strong>: FD = <code>(L(x+h) - L(x-h)) / (2h)</code> — <em>h=1e-5</em> 일 때 <em>FD truncation noise ~ 1e-12</em>. <em>J4 N&gt;=4 의 abs diff 1e-12 ~ 1e-11</em> — <em>FD precision floor</em> 의 <em>amplification 가능</em>. 더 정확 FD method (Richardson extrapolation, complex step) 로 측정.</p>
+</li>
+<li>
+<p><strong>만약 모든 .grad call 이 <em>production output = manual numpy</em></strong> → <em>FD precision floor 가 source</em>. <em>real wrong 없음</em>. Genesis 의 <em>N&gt;=4 J4 backward 가 </em>수치적 정확*.</p>
+</li>
+</ol>
+<h2 id="old-handoff-finding-obsolete">OLD HANDOFF — 이 위 finding 으로 OBSOLETE<a class="headerlink" href="#old-handoff-finding-obsolete" title="Permanent link">&para;</a></h2>
+<h3 id="strategy-a1-2026-05-14-revision-3">Strategy A1 확장 — 결정적 진단 (2026-05-14, revision 3)<a class="headerlink" href="#strategy-a1-2026-05-14-revision-3" title="Permanent link">&para;</a></h3>
+<h3 id="production-state-manual-kernel-output-capture">Production state 의 manual kernel output capture<a class="headerlink" href="#production-state-manual-kernel-output-capture" title="Permanent link">&para;</a></h3>
+<p><code>rigid_solver.py</code> 에 <em>manual kernel 직후 vel.grad / qpos.grad python capture</em>:<br />
+- t=0 vel.grad[wy] = <strong>-7.138848111387e-07</strong> (= production silent drop)<br />
+- t=0 qpos.grad[5] = <strong>-9.105206192497e-05</strong> (= production silent drop)</p>
+<p>verify_v2 의 <em>manual numpy</em>:<br />
+- vel.grad[wy] = -7.13896234e-07<br />
+- qpos.grad[5] = -9.10543463e-05</p>
+<p>⇒ <strong>우리 <em>kernel_manual_func_integrate_bw<em> 의 </em>production state output<em> 가 </em>production silent drop<em> 와 </em>byte-exact 동일</em></strong>.</p>
+<h3 id="isolated-test-vs-production-state">isolated test vs production state 의 결정적 차이<a class="headerlink" href="#isolated-test-vs-production-state" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test environment</th>
+<th>manual kernel output</th>
+<th>manual numpy</th>
+<th>diff</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>isolated standalone (<code>diag_manual_func_integrate_bw_verify.py</code>)</td>
+<td>-X</td>
+<td>-X</td>
+<td>0</td>
+</tr>
+<tr>
+<td>production state inject (<code>diag_combined_with_production_state.py</code>)</td>
+<td>manual numpy</td>
+<td>manual numpy</td>
+<td>~1e-20</td>
+</tr>
+<tr>
+<td><strong>production self.substep replay 안</strong></td>
+<td><strong>production silent drop</strong></td>
+<td>manual numpy</td>
+<td><strong>1.14e-11</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">원인 진단<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<p><strong>Quadrants kernel 안의 <code>qd.Vector</code> arithmetic 자체</strong> 가 <em>production state 의 </em>near-identity quat / 작은 ang<em> 에서 </em>FP arithmetic 순서 차이 (FMA 등)<em> 로 </em>python numpy 와 <em>수치적 1.14e-11 diff</em>.</p>
+<ul>
+<li>isolated test 의 <em>random state</em> — <em>non-singular</em>. <em>Quadrants FP arithmetic = python numpy</em>.</li>
+<li>production state — <em>near-identity quat (0.999..., 1e-4, ...)</em>. <em>FP cancellation 의 </em>operation 순서 의존<em>. </em>Quadrants 의 <em>FMA 사용</em> 또는 <em>Vector 의 </em>operation 순서<em> 가 </em>python numpy 와 <em>수치적 다른 결과</em>.</li>
+</ul>
+<h3 id="strategy-a1-a2-0">Strategy A1, A2 모두 효과 0%<a class="headerlink" href="#strategy-a1-a2-0" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>원인</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A2 (split kernel)</td>
+<td>fields-level cross-kernel chain</td>
+</tr>
+<tr>
+<td>A1 (manual <code>.grad</code> write via Quadrants kernel)</td>
+<td><strong>manual kernel 자체가 Quadrants FP arithmetic 사용 → 동일 silent drop</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="session-work_3">다음 session 우선 work<a class="headerlink" href="#session-work_3" title="Permanent link">&para;</a></h3>
+<p><strong>Strategy A1 fundamental 변형</strong>: <em>manual kernel 안의 <code>qd.Vector</code> 제거 + scalar arithmetic + operation 순서 명시</em>.<br />
+- Quadrants kernel 안에서 <code>aw*bw + ax*bx + ay*by + az*bz</code> 형태 명시적 scalar 작성 (no <code>qd.Vector</code> outer call).<br />
+- FMA 비활성화 가능성 확인 (<code>qd.no_fast_math</code> 등 flag).<br />
+- python numpy 와 <em>수치적 byte-exact</em> 검증 — production state 에서.</p>
+<p>또는 <strong>python-side computation</strong>: <code>kernel_manual_func_integrate_bw</code> 를 <em>python function</em> 으로 작성 (numpy 사용). Genesis solver field 와 sync 위한 to_numpy + from_numpy 접근. <em>kernel JIT 우회</em>.</p>
+<h2 id="falsified">이전 시도들 — FALSIFIED 기록<a class="headerlink" href="#falsified" title="Permanent link">&para;</a></h2>
+<h3 id="strategy-a1-2026-05-14-0">Strategy A1 시도 결과 (초기, 2026-05-14): 효과 0%<a class="headerlink" href="#strategy-a1-2026-05-14-0" title="Permanent link">&para;</a></h3>
+<p><code>kernel_manual_func_integrate_bw</code> 작성 (manual_bw.py) — manual reverse of func_integrate (FP64 floor PASS isolated, <code>notes/diag_manual_func_integrate_bw_verify.py</code>).</p>
+<p><code>rigid_solver.py</code> 의 <em>backward replay path 변경</em>:<br />
+- <code>self.substep(f)</code>: self._is_backward=True 시 <code>kernel_step_2</code> 대신 <code>kernel_func_update_acc_standalone + kernel_func_integrate_standalone</code> split kernels 호출<br />
+- <code>substep_pre_coupling_grad</code>: <code>kernel_step_2.grad</code> 대신 <code>kernel_manual_func_integrate_bw</code> 호출 (직접 <code>.grad</code> write)</p>
+<p>결과:<br />
+- per-DOF rel error: <strong>byte-exact identical</strong> (seed 1000 t=0 root_wy = -1.7125243034e-09 in both baseline and fix)<br />
+- J4 sweep: 모든 N (1, 2, 4, 8, 16, 32) max rel <strong>byte-exact identical</strong><br />
+- debug verify: <code>kernel_manual_func_integrate_bw</code> 안에서 <code>qpos.grad[3] = 1e10</code> 강제 set → stage 16 dump 에 1e10 반영 ✓ (호출 됨)</p>
+<p><strong>해석</strong>:<br />
+- manual kernel 호출됨, qpos/vel/acc.grad 에 <em>직접 write</em> 완료<br />
+- 그러나 <em>후속 .grad chain</em> (compute_qacc.grad, torque.grad, fwd_dyn.grad, COM_links.grad, forward_velocity.grad 등) 이 <em>Quadrants AD 의 forward-stash-based chain</em> 으로 동작<br />
+- Quadrants AD chain 이 <em>fields-level</em> 로 <em>forward stash 기반</em> — <em>우리 manual <code>.grad</code> write 를 </em>읽지 않거나<em>, </em>cross-kernel chain 으로 <em>덮어씀</em><em><br />
+- 결과: </em>최종 ctrl_force.grad output 가 <em>production output 와 동일</em> (manual fix 의 영향 없음)</p>
+<p>⇒ <strong>Quadrants AD 한계</strong>: kernel-level <code>.grad</code> 호출이 <em>유일한 chain 통로</em>. Manual <code>.grad</code> write 는 <em>후속 chain 이 무시</em>. <em>kernel <code>.grad</code> 호출의 </em>forward stash<em> 가 </em>chain 의 source*.</p>
+<h3 id="strategy-a1-a2-falsified">Strategy A1, A2 모두 falsified<a class="headerlink" href="#strategy-a1-a2-falsified" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>시도</th>
+<th>결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A2 (split kernel for cleaner stash)</td>
+<td>kernel_step_2 → split standalone</td>
+<td>byte-exact identical</td>
+</tr>
+<tr>
+<td>A1 (manual <code>.grad</code> write directly)</td>
+<td>kernel_step_2.grad → kernel_manual_func_integrate_bw</td>
+<td>byte-exact identical</td>
+</tr>
+</tbody>
+</table>
+<h3 id="session-approach">다음 session 의 <em>유일하게 남은</em> approach<a class="headerlink" href="#session-approach" title="Permanent link">&para;</a></h3>
+<p><strong>Strategy A1 확장</strong>: 후속 <em>모든</em> <code>.grad</code> 호출도 <em>manual replace</em>:<br />
+- <code>kernel_compute_qacc.grad</code> → manual_compute_qacc_bw (이미 있음 — <code>kernel_manual_compute_qacc_bw</code>)<br />
+- <code>kernel_torque_and_passive_force.grad</code> → manual<br />
+- <code>kernel_split_*.grad</code> → manual (각각)<br />
+- <code>kernel_COM_links.grad</code> → manual (<code>kernel_manual_COM_links_bw</code> 일부 있음)<br />
+- <code>kernel_forward_velocity_one_link.grad</code> → manual</p>
+<p><em>entire backward chain manual replace</em>. 매우 invasive 하지만 <em>Quadrants AD 의 fields-level chain</em> 자체 <em>우회</em>.</p>
+<p>근데 <em>대안</em>: production 의 <em>kernel_step_1 자체 호출 안 함</em> (= cross-kernel stash 의 source 제거). 가능성 검토 필요:<br />
+- <em>kernel_step_1 의 outputs (cinr_</em>, cdof_<em>, cdofd_</em>, etc.)<em> 가 </em>backward chain 의 primal 로 필요<em> — </em>호출 안 함 → backward chain 망가짐<em>.<br />
+- </em>kernel_step_1 의 <em>primal output 만 별도 path 로 compute + forward stash 무</em>:<br />
+  - <code>func_forward_kinematics</code> 등 <em>수동 호출 + 그 결과 fields 에 write</em> (no stash)<br />
+  - 이 경우 <em>Quadrants AD chain 의 </em>primal field read<em> 만 사용. </em>stash 없음<em>. </em>manual <code>.grad</code> write 가 <em>후속 chain 의 </em>primal-only chain 영향 안 미침*.</p>
+<p>이게 <em>근본 fix</em> 방향. <em>기존 kernel_step_1 호출 제거 + 수동 forward 함수 호출</em> — 대규모 refactor.</p>
+<p>implementation 단계:<br />
+1. <em>manual quat update forward + reverse</em> 함수 작성 (manual_bw.py 에 helper 이미 있음: <code>d_quat_mul__dlhs</code>, <code>d_quat_mul__drhs</code>, <code>d_rotvec_to_quat__drotvec</code>).<br />
+2. <em>quat_mul 호출 wrap</em>:<br />
+<code>python
+   # func_integrate 안의 quat update:
+   # 기존: rot = qd_transform_quat_by_quat(qrot, rot0)
+   # 변경:
+   rot = qd.ad.grad_replaced(
+       _func_quat_update_fwd,  # forward: qd_transform_quat_by_quat(qrot, rot0)
+       _func_quat_update_bw,   # manual reverse
+       qrot, rot0
+   )</code><br />
+3. <em>Quadrants <code>qd.ad.grad_replaced + grad_for</code> API 확인</em>.<br />
+4. <em>test</em>: J4 sweep — N=4, 8, 16 rel error 측정.</p>
+<p><strong>대안 (B1, invasive)</strong>: <code>kernel_step_1</code> 안의 <em>func_update_acc(update_cacc=False)</em> 를 <em>별 kernel 로 분리</em> + <em>cacc field 도 별 buffer 사용</em> → step_2 의 update_acc(update_cacc=True) 와 <em>완전 fields 분리</em>. <em>너무 invasive</em>.</p>
+<h2 id="working-diagnostics_1">Working diagnostics<a class="headerlink" href="#working-diagnostics_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>notes/diag_func_integrate_isolated_fd.py</code> — standalone func_integrate FD verify (PASS)</li>
+<li><code>notes/diag_combined_update_acc_integrate_fd.py</code> — combined chain random-state verify (PASS)</li>
+<li><code>notes/diag_combined_with_production_state.py</code> — production state inject verify (PASS, X1 falsified)</li>
+<li><code>notes/diag_j4_n2_step2_bw_verify.py</code> — production kernel_step_2.grad vs manual (silent drop 1.14e-11)</li>
+</ul>
+<h3 id="step-b-forward_dynamics-chain-isolated-fd-verify">Step B: forward_dynamics chain isolated FD verify<a class="headerlink" href="#step-b-forward_dynamics-chain-isolated-fd-verify" title="Permanent link">&para;</a></h3>
+<p>Coriolis/mass matrix chain 의 sub-kernel 별 isolated FD.</p>
+<h2 id="_10">부산물<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<ul>
+<li>N=1 wrong 의 본질: FD precision floor + 약간의 step_2 silent drop (cumulative N step 에서만 visible)</li>
+<li>Hypothesis 1, 2 모두 FALSIFIED</li>
+<li>Quadrants AD 가 <em>forward stash primal</em> 사용 — backward time field 변경 무효</li>
+</ul>
+<h2 id="working-diagnostics_2">Working diagnostics<a class="headerlink" href="#working-diagnostics_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>notes/diag_j4_n2_step2_bw_verify.py</code> — manual vs kernel step_2.grad diff</li>
+<li><code>notes/diag_j4_n1_perdof_10seeds.py</code> — N=1 per-DOF breakdown</li>
+<li><code>notes/diag_j4_n2_perdof.py</code> — N=2 per-DOF + 5 seeds</li>
+<li><code>notes/diag_j4_n4_perdof.py</code> — N=4 per-DOF</li>
+<li><code>notes/diag_j4_n2_substep_dump.py</code> — N=2 backward stage dump</li>
+<li><code>notes/parse_dump.py</code> — dump → per-stage table</li>
+</ul>
+</main>
+</body>
+</html>

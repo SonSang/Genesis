@@ -1,0 +1,199 @@
+J4 N=2 backward stage dump — non-zero |.grad|_max
+==============================================================================================================
+
+[f=0 ENTRY (before prepare_backward_substep)]
+  links_state.pos                             4.000e-01
+
+[f=0 entry]
+  links_state.pos                             4.000e-01
+
+[f=0 after post-fwd_velocity.grad]
+  links_state.pos                             4.000e-01
+
+[f=0 after post-COM_links.grad]
+  links_state.pos                             4.000e-01
+
+[f=0 after post-update_cartesian_space.grad]
+  rigid_global_info.qpos                      4.000e-01
+
+[f=0 after begin_backward_substep]
+  rigid_global_info.qpos_next                 4.000e-01
+
+[f=0 after step_2.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  dofs_state.acc                              4.000e-05
+
+[f=0 after compute_qacc.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  rigid_global_info.mass_mat                  8.677e-05
+  dofs_state.force                            2.666e-05
+
+[f=0 after fwd_dynamics_without_qacc.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  links_state.cinr_pos                        1.462e-04
+  dofs_state.cdof_vel                         1.086e-04
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  dofs_state.ctrl_force                       2.666e-05
+  dofs_state.cdof_ang                         1.006e-05
+  dofs_state.cdofd_vel                        2.149e-06
+  links_state.cd_vel                          5.731e-07
+  links_state.cd_ang                          2.671e-07
+  links_state.cinr_mass                       2.340e-07
+  links_state.cinr_inertial                   8.207e-08
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+  dofs_state.cdofd_ang                        3.880e-11
+
+[f=0 ENTRY (before prepare_backward_substep)]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  links_state.cinr_pos                        1.462e-04
+  dofs_state.cdof_vel                         1.086e-04
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  dofs_state.cdof_ang                         1.006e-05
+  dofs_state.cdofd_vel                        2.149e-06
+  links_state.cd_vel                          5.731e-07
+  links_state.cd_ang                          2.671e-07
+  links_state.cinr_mass                       2.340e-07
+  links_state.cinr_inertial                   8.207e-08
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+  dofs_state.cdofd_ang                        3.880e-11
+
+[f=0 entry]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  links_state.cinr_pos                        1.462e-04
+  dofs_state.cdof_vel                         1.086e-04
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  dofs_state.cdof_ang                         1.006e-05
+  dofs_state.cdofd_vel                        2.149e-06
+  links_state.cd_vel                          5.731e-07
+  links_state.cd_ang                          2.671e-07
+  links_state.cinr_mass                       2.340e-07
+  links_state.cinr_inertial                   8.207e-08
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+  dofs_state.cdofd_ang                        3.880e-11
+
+[f=0 after post-fwd_velocity.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  links_state.cinr_pos                        1.462e-04
+  dofs_state.cdof_vel                         1.086e-04
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  dofs_state.cdof_ang                         1.006e-05
+  links_state.cinr_mass                       2.340e-07
+  links_state.cinr_inertial                   8.207e-08
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+
+[f=0 after post-COM_links.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  joints_state.xanchor                        8.913e-05
+  links_state.pos                             7.309e-05
+  links_state.i_pos_shift                     7.308e-05
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  links_state.quat                            1.462e-05
+  links_state.mass_shift                      2.454e-07
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+  joints_state.xaxis                          4.488e-09
+
+[f=0 after post-update_cartesian_space.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              4.000e-03
+  links_state.i_pos_shift                     7.308e-05
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  links_state.mass_shift                      2.454e-07
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+
+[f=0 after begin_backward_substep]
+  rigid_global_info.qpos_next                 4.000e-01
+  dofs_state.vel_next                         4.000e-03
+  links_state.i_pos_shift                     7.308e-05
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  links_state.mass_shift                      2.454e-07
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+
+[f=0 after step_2.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              7.999e-03
+  dofs_state.acc                              7.999e-05
+  links_state.i_pos_shift                     7.308e-05
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  links_state.mass_shift                      2.454e-07
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+
+[f=0 after compute_qacc.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              7.999e-03
+  rigid_global_info.mass_mat                  2.866e-04
+  links_state.i_pos_shift                     7.308e-05
+  dofs_state.force                            5.333e-05
+  links_state.cfrc_applied_vel                2.666e-05
+  links_state.cfrc_coupling_vel               2.666e-05
+  links_state.mass_shift                      2.454e-07
+  links_state.cfrc_applied_ang                1.497e-08
+  links_state.cfrc_coupling_ang               1.497e-08
+
+[f=0 after fwd_dynamics_without_qacc.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              7.999e-03
+  dofs_state.cdof_vel                         4.299e-04
+  links_state.cinr_pos                        1.386e-04
+  links_state.cfrc_applied_vel                7.999e-05
+  links_state.i_pos_shift                     7.308e-05
+  links_state.cfrc_coupling_vel               5.333e-05
+  dofs_state.ctrl_force                       5.333e-05
+  dofs_state.cdof_ang                         3.153e-05
+  dofs_state.cdofd_vel                        4.299e-06
+  links_state.cinr_mass                       3.405e-06
+  links_state.cd_vel                          2.770e-06
+  links_state.cd_ang                          6.051e-07
+  links_state.mass_shift                      2.454e-07
+  links_state.cinr_inertial                   2.102e-07
+  links_state.cfrc_applied_ang                3.911e-08
+  links_state.cfrc_coupling_ang               3.911e-08
+  dofs_state.cdofd_ang                        2.312e-10
+
+[f=0 after initial-COM_links.grad]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              7.999e-03
+  joints_state.xanchor                        2.078e-04
+  links_state.pos                             1.385e-04
+  links_state.i_pos_shift                     8.309e-05
+  links_state.cfrc_applied_vel                7.999e-05
+  links_state.cfrc_coupling_vel               5.333e-05
+  dofs_state.ctrl_force                       5.333e-05
+  links_state.quat                            1.386e-05
+  links_state.mass_shift                      3.203e-06
+  links_state.cfrc_applied_ang                3.911e-08
+  links_state.cfrc_coupling_ang               3.911e-08
+  joints_state.xaxis                          1.981e-09
+
+[f=0 after initial-UCS+FV.grad (end)]
+  rigid_global_info.qpos                      4.000e-01
+  dofs_state.vel                              7.999e-03
+  links_state.i_pos_shift                     8.309e-05
+  links_state.cfrc_applied_vel                7.999e-05
+  links_state.cfrc_coupling_vel               5.333e-05
+  dofs_state.ctrl_force                       5.333e-05
+  links_state.mass_shift                      3.203e-06
+  links_state.cfrc_applied_ang                3.911e-08
+  links_state.cfrc_coupling_ang               3.911e-08

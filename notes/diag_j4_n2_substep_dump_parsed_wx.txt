@@ -1,0 +1,88 @@
+J4 N=2 seed=1000 — root_wx chain trace per stage
+==============================================================================================================
+Indices: qpos[3..6] = chassis quat (qw, qx, qy, qz)  |  vel.grad[3..5] = chassis ang vel  |
+         vel.grad[6] = arm angle  |  force/acc.grad[3] = chassis wx force/acc
+
+
+[f=0 ENTRY (before prepare_backward_substep)]
+  links_state.pos                   [ -2.40e-05,  -1.19e-05,   1.61e-04,   4.00e-01,  -1.36e-04,   2.02e-04]
+
+[f=0 entry]
+  links_state.pos                   [ -2.40e-05,  -1.19e-05,   1.61e-04,   4.00e-01,  -1.36e-04,   2.02e-04]
+
+[f=0 after post-fwd_velocity.grad]
+  links_state.pos                   [ -2.40e-05,  -1.19e-05,   1.61e-04,   4.00e-01,  -1.36e-04,   2.02e-04]
+
+[f=0 after post-COM_links.grad]
+  links_state.pos                   [ -2.40e-05,  -1.19e-05,   1.61e-04,   4.00e-01,  -1.36e-04,   2.02e-04]
+
+[f=0 after post-update_cartesian_space.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   1.08e-04,  -7.26e-05,  -2.95e-05,   0.00e+00]
+
+[f=0 after step_2.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -1.48e-06,   3.63e-06,  -6.32e-12,  -3.23e-07,  -2.36e-08,   0.00e+00]
+  dofs_state.acc                    [  4.00e-05,  -1.48e-08,   3.63e-08,  -6.32e-14,  -3.23e-09,  -2.36e-10,   0.00e+00]
+
+[f=0 after compute_qacc.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -1.48e-06,   3.63e-06,  -6.32e-12,  -3.23e-07,  -2.36e-08,   0.00e+00]
+  dofs_state.force                  [  2.67e-05,  -1.00e-08,   2.49e-08,  -5.06e-13,   3.52e-09,   1.47e-09,   1.14e-08]
+
+[f=0 after fwd_dynamics_without_qacc.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -1.48e-06,   3.63e-06,  -7.47e-11,  -1.66e-07,   6.48e-08,   9.52e-08]
+  links_state.cd_vel                [ -4.54e-10,  -1.38e-07,   4.31e-07,  -5.13e-10,  -6.93e-08,   5.73e-07]
+  links_state.cd_ang                [  2.83e-11,  -6.12e-08,  -4.52e-08,  -4.30e-11,  -2.67e-07,  -6.38e-08]
+
+[f=0 ENTRY (before prepare_backward_substep)]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -1.48e-06,   3.63e-06,  -7.47e-11,  -1.66e-07,   6.48e-08,   9.52e-08]
+  links_state.cd_vel                [ -4.54e-10,  -1.38e-07,   4.31e-07,  -5.13e-10,  -6.93e-08,   5.73e-07]
+  links_state.cd_ang                [  2.83e-11,  -6.12e-08,  -4.52e-08,  -4.30e-11,  -2.67e-07,  -6.38e-08]
+
+[f=0 entry]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -1.48e-06,   3.63e-06,  -7.47e-11,  -1.66e-07,   6.48e-08,   9.52e-08]
+  links_state.cd_vel                [ -4.54e-10,  -1.38e-07,   4.31e-07,  -5.13e-10,  -6.93e-08,   5.73e-07]
+  links_state.cd_ang                [  2.83e-11,  -6.12e-08,  -4.52e-08,  -4.30e-11,  -2.67e-07,  -6.38e-08]
+
+[f=0 after post-fwd_velocity.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -6.49e-07,   4.95e-06,   2.60e-12,  -6.10e-07,  -6.47e-08,  -1.15e-07]
+
+[f=0 after post-COM_links.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.30e-05,  -5.97e-05,  -2.55e-05,   0.00e+00]
+  dofs_state.vel                    [  4.00e-03,  -6.49e-07,   4.95e-06,   2.60e-12,  -6.10e-07,  -6.47e-08,  -1.15e-07]
+  links_state.pos                   [ -5.37e-08,   5.54e-05,   5.94e-05,  -3.39e-08,   2.77e-05,   7.31e-05]
+  links_state.quat                  [  7.34e-12,  -5.11e-08,   3.96e-08,  -4.00e-08,  -8.35e-09,  -1.57e-09,  -1.46e-05,   5.55e-06]
+
+[f=0 after post-update_cartesian_space.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,   4.29e-05,  -8.61e-05,  -8.86e-06,  -7.31e-06]
+  dofs_state.vel                    [  4.00e-03,  -6.49e-07,   4.95e-06,   2.60e-12,  -6.10e-07,  -6.47e-08,  -1.15e-07]
+
+[f=0 after step_2.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,  -4.31e-05,  -9.59e-05,   3.25e-05,  -7.31e-06]
+  dofs_state.vel                    [  8.00e-03,  -2.13e-06,   8.58e-06,  -4.30e-07,  -1.11e-06,   2.02e-07,  -1.88e-07]
+  dofs_state.acc                    [  8.00e-05,  -2.13e-08,   8.58e-08,  -4.30e-09,  -1.11e-08,   2.02e-09,  -1.88e-09]
+
+[f=0 after compute_qacc.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,  -4.31e-05,  -9.59e-05,   3.25e-05,  -7.31e-06]
+  dofs_state.vel                    [  8.00e-03,  -2.13e-06,   8.58e-06,  -4.30e-07,  -1.11e-06,   2.02e-07,  -1.88e-07]
+  dofs_state.force                  [  5.33e-05,  -1.57e-08,   5.61e-08,  -3.91e-08,  -1.57e-08,   1.48e-08,   1.42e-08]
+
+[f=0 after fwd_dynamics_without_qacc.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,  -4.31e-05,  -9.59e-05,   3.25e-05,  -7.31e-06]
+  dofs_state.vel                    [  8.00e-03,  -2.13e-06,   8.58e-06,  -4.30e-07,  -4.48e-07,  -5.76e-08,  -3.08e-08]
+  links_state.cd_vel                [ -1.27e-10,  -2.77e-06,  -6.53e-07,   4.11e-10,  -1.39e-06,  -6.30e-07]
+  links_state.cd_ang                [ -3.07e-10,  -5.09e-07,   4.50e-07,   3.56e-10,   3.23e-08,  -6.05e-07]
+
+[f=0 after initial-COM_links.grad]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,  -4.31e-05,  -9.59e-05,   3.25e-05,  -7.31e-06]
+  dofs_state.vel                    [  8.00e-03,  -4.21e-06,   7.94e-06,  -4.30e-07,  -8.28e-07,  -6.28e-07,  -6.18e-08]
+  links_state.pos                   [  5.68e-08,  -1.39e-04,  -3.25e-05,   7.19e-08,  -6.93e-05,  -3.14e-05]
+  links_state.quat                  [  1.53e-12,   3.54e-08,   1.31e-07,   1.08e-07,   2.09e-08,  -1.70e-12,   6.27e-06,  -1.39e-05]
+
+[f=0 after initial-UCS+FV.grad (end)]
+  rigid_global_info.qpos            [  4.00e-01,  -1.48e-04,   3.63e-04,   1.60e-01,  -4.31e-05,  -8.30e-05,  -8.93e-06,  -4.17e-06]
+  dofs_state.vel                    [  8.00e-03,  -4.21e-06,   7.94e-06,  -4.30e-07,  -8.28e-07,  -6.28e-07,  -6.18e-08]

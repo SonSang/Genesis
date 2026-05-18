@@ -1,0 +1,50 @@
+
+topology         N   max|diff|   p95|diff|   med|diff|   max_rel   p95_rel   med_rel  worst_seed
+---------------------------------------------------------------------------------------------------------
+J1_free          4   1.378e-10   6.188e-11   5.145e-19 137819.454 61880.700     0.000        1002
+J1_free         16   8.174e-08   1.626e-08   6.467e-17 81737264.834 16264079.111     0.000        1002
+J1_free         32   7.528e-07   2.228e-07   1.533e-15 752773826.026 222793955.206     0.000        1002
+[38;5;226m[Genesis] [20:08:36] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:40] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:40] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:41] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:41] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:43] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+J2_revolute      4   0.000e+00   0.000e+00   0.000e+00     0.000     0.000     0.000        1000
+[38;5;226m[Genesis] [20:08:43] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:45] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:45] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:47] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:47] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:48] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+J2_revolute     16   0.000e+00   0.000e+00   0.000e+00     0.000     0.000     0.000        1000
+[38;5;226m[Genesis] [20:08:49] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:50] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:51] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:52] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:53] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:08:55] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+J2_revolute     32   0.000e+00   0.000e+00   0.000e+00     0.000     0.000     0.000        1000
+J3_prismatic     4   3.381e-19   3.140e-19   1.839e-19     0.000     0.000     0.000        1001
+J3_prismatic    16   3.888e-17   2.664e-17   4.677e-18     0.000     0.000     0.000        1000
+J3_prismatic    32   1.099e-15   4.463e-16   9.283e-17     0.000     0.000     0.000        1002
+[38;5;226m[Genesis] [20:09:12] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:15] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:16] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:17] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:17] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:19] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+J4_free_rev      4   2.159e-07   9.079e-08   1.839e-09 56606.371 19616.922     0.080        1000
+[38;5;226m[Genesis] [20:09:19] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:21] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:22] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:23] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:24] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:26] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+J4_free_rev     16   7.906e-06   2.069e-06   4.829e-08 12481.747   407.798     0.125        1002
+[38;5;226m[Genesis] [20:09:27] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:28] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:31] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:32] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:35] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [20:09:36] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m

@@ -188,6 +188,7 @@ from .abd.diff import (
     kernel_copy_next_to_curr_no_check,
 )
 from .abd.manual_bw import (
+    kernel_manual_func_integrate_bw,
     kernel_manual_uc_bw_one_link,
     kernel_manual_update_force_bw,
     kernel_manual_mm_assemble_bw,
@@ -1031,23 +1032,23 @@ class RigidSolver(KinematicSolver):
         else:
             self._func_constraint_force()
             kernel_step_2(
-                self.dofs_state,
-                self.dofs_info,
-                self.links_info,
-                self.links_state,
-                self.joints_info,
-                self.joints_state,
-                self.entities_state,
-                self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.collider._collider_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-                self.constraint_solver.contact_island.contact_island_state,
-                self._is_backward,
-                self._errno,
-            )
+                    self.dofs_state,
+                    self.dofs_info,
+                    self.links_info,
+                    self.links_state,
+                    self.joints_info,
+                    self.joints_state,
+                    self.entities_state,
+                    self.entities_info,
+                    self.geoms_info,
+                    self.geoms_state,
+                    self.collider._collider_state,
+                    self._rigid_global_info,
+                    self._static_rigid_sim_config,
+                    self.constraint_solver.contact_island.contact_island_state,
+                    self._is_backward,
+                    self._errno,
+                )
             self._is_forward_pos_updated = not self._enable_mujoco_compatibility
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
             if self._requires_grad:
@@ -1405,6 +1406,7 @@ class RigidSolver(KinematicSolver):
         ]
         verbose_set = {
             "rigid_global_info.qpos",
+            "rigid_global_info.qpos_next",
             "dofs_state.vel",
             "dofs_state.vel_next",
             "dofs_state.acc",
@@ -1614,6 +1616,7 @@ class RigidSolver(KinematicSolver):
                     _offset,
                     links_state=self.links_state,
                     links_info=self.links_info,
+                    joints_state=self.joints_state,
                     joints_info=self.joints_info,
                     dofs_info=self.dofs_info,
                     entities_info=self.entities_info,
@@ -1646,22 +1649,21 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
         self._debug_grad_dump(f"f={f} after begin_backward_substep")
 
-        kernel_step_2.grad(
+        # Strategy A1 (extended): replace kernel_step_2.grad with manual reverse.
+        # See notes/diffrigid_handoff_n_ge_2_residual.md for the rationale —
+        # `func_integrate.grad` in production has a ~2e-09 silent drop on quat_mul
+        # reverse due to Quadrants AD's cross-kernel fields-level chain.
+        # `kernel_manual_func_integrate_bw` is FP64-floor verified (see
+        # notes/diag_manual_func_integrate_bw_verify.py).
+        kernel_manual_func_integrate_bw(
+            f=f,
             dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
             links_info=self.links_info,
-            links_state=self.links_state,
             joints_info=self.joints_info,
-            joints_state=self.joints_state,
-            entities_state=self.entities_state,
             entities_info=self.entities_info,
-            geoms_info=self.geoms_info,
-            geoms_state=self.geoms_state,
-            collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
+            rigid_adjoint_cache=self._rigid_adjoint_cache,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_backward=True,
             errno=self._errno,
         )
         self._debug_grad_dump(f"f={f} after step_2.grad")
@@ -1757,6 +1759,7 @@ class RigidSolver(KinematicSolver):
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=True,
         )
+        self._debug_grad_dump(f"f={f} after torque_and_passive_force.grad")
         # Step 5 sub-4: split compute_mass_matrix.grad into per-sub-block reverse
         # to localize the 50%-rel-err contribution observed when its monolithic
         # .grad was skipped. Reverse order: impint_corr → armature → assemble →
@@ -1887,6 +1890,7 @@ class RigidSolver(KinematicSolver):
                     _offset,
                     links_state=self.links_state,
                     links_info=self.links_info,
+                    joints_state=self.joints_state,
                     joints_info=self.joints_info,
                     dofs_info=self.dofs_info,
                     entities_info=self.entities_info,

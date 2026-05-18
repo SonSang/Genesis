@@ -1,0 +1,36 @@
+1. Forward
+
+2. Backward
+
+2-1. kernel_prepare_backward_substep
+
+2-1-1. func_load_adjoint_cache
+
+다음 변수들을 cache 에서 가져온다.
+
+- dofs_state: vel, acc
+- rigid_global_info: qpos
+
+2-1-2. (if not mujoco compatibility) func_update_cartesian_space
+
+mujoco compatibility 가 꺼져있으면, 한번 cartesian space update 한 후 결과들을 adjoint cache 에 저장한다.
+이는 mujoco compatibility 가 꺼져있으면 나중에 이 값들이 overwritten 되기 때문이다.
+
+2-1-2-1. func_update_cartesian_space_entity
+
+2-1-2-1-1. func_forward_kinematics_entity
+
+2-1-2-1-2. func_COM_links_entity
+
+2-1-2-1-3. func_update_geoms_entity
+
+2-1-3. (if not mujoco compatibility) func_copy_cartesian_space
+
+위에서 업데이트한 cartesian space value 들을 adjoint cache 에 저장한다.
+특히 dofs, links, joints, geoms states 의 output 들을 저장한다. 
+나중에 backward pass 에서 이 값들이 덮어씌워졌을 때 값들을 복원하기 위해 사용한다.
+
+- dofs_state: pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
+- links_state: pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat, cd_vel, cd_ang
+- joints_state: xanchor, xaxis
+- geoms_state: pos, quat, verts_updated

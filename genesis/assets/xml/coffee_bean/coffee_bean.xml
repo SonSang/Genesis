@@ -1,0 +1,15 @@
+<mujoco model="coffee_bean">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <asset>
+    <mesh name="bean_visual" file="coffee_bean.obj" scale="20 20 20"/>
+  </asset>
+
+  <worldbody>
+    <body name="bean" pos="0 0 0">
+      <freejoint/>
+      <geom type="mesh" mesh="bean_visual" contype="0" conaffinity="0" group="1"/>
+      <geom type="sphere" size="0.02" pos="0 0 0" contype="1" conaffinity="1" rgba="0 0 0 0" friction="0.6 0.02 0.002"/>
+    </body>
+  </worldbody>
+</mujoco>

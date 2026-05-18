@@ -1241,6 +1241,92 @@ def func_compute_qacc(
                     dofs_state.acc[i_d1, i_b] = dofs_state.acc_smooth[i_d1, i_b]
 
 
+@qd.kernel(fastcache=True)
+def kernel_func_integrate_standalone(
+    dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    # Standalone wrapper for `func_integrate` so its forward + Quadrants AD
+    # reverse can be exercised in isolation by FD-verification scripts
+    # (see notes/diag_func_integrate_isolated_fd.py). Used for diagnosing the
+    # step_2.grad silent drop in the quat_mul reverse chain.
+    func_integrate(
+        dofs_state=dofs_state,
+        links_info=links_info,
+        joints_info=joints_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_func_update_acc_standalone(
+    dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    # Standalone wrapper for `func_update_acc(update_cacc=True)` with parametric
+    # `is_backward`. Used in the backward replay path of `self.substep` so that
+    # the update_acc forward stash is isolated from `kernel_step_2`'s forward stash —
+    # enables `kernel_manual_func_integrate_bw` to bypass Quadrants AD's fields-
+    # level cross-kernel chain on the quat_mul reverse.
+    func_update_acc(
+        update_cacc=True,
+        dofs_state=dofs_state,
+        links_info=links_info,
+        links_state=links_state,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_update_acc_plus_integrate_standalone(
+    dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    links_state: array_class.LinksState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    # Standalone wrapper exercising the exact `func_update_acc + func_integrate`
+    # sub-chain that `kernel_step_2` runs in backward mode (default integrator
+    # `approximate_implicitfast` skips `func_implicit_damping`). Used to verify
+    # whether the step_2.grad silent drop originates from the kernel-level
+    # composition of these two funcs versus either one alone.
+    func_update_acc(
+        update_cacc=True,
+        dofs_state=dofs_state,
+        links_info=links_info,
+        links_state=links_state,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+    func_integrate(
+        dofs_state=dofs_state,
+        links_info=links_info,
+        joints_info=joints_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=is_backward,
+    )
+
+
 @qd.func
 def func_integrate(
     dofs_state: array_class.DofsState,

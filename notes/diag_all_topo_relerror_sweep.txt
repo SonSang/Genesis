@@ -1,0 +1,66 @@
+
+=== J1_free (n_dofs=6) ===
+  N=  1: max rel=4.287e-11  mean rel=1.299e-11  (2.8s)
+  N=  2: max rel=1.188e-03  mean rel=6.423e-04  (0.4s)
+  N=  4: max rel=6.690e-03  mean rel=1.968e-03  (0.9s)
+  N=  8: max rel=2.615e-02  mean rel=5.257e-03  (2.3s)
+  N= 16: max rel=5.312e-02  mean rel=9.275e-03  (6.5s)
+  N= 32: max rel=7.763e-02  mean rel=1.415e-02  (20.3s)
+
+=== J2_revolute (n_dofs=1) ===
+[38;5;226m[Genesis] [23:56:47] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [23:56:50] [WARNING] Link 'b' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+  N=  1: max rel=0.000e+00  mean rel=0.000e+00  (3.3s)
+  N=  2: max rel=0.000e+00  mean rel=0.000e+00  (0.1s)
+  N=  4: max rel=0.000e+00  mean rel=0.000e+00  (0.2s)
+  N=  8: max rel=0.000e+00  mean rel=0.000e+00  (0.5s)
+  N= 16: max rel=0.000e+00  mean rel=0.000e+00  (1.4s)
+  N= 32: max rel=0.000e+00  mean rel=0.000e+00  (3.9s)
+
+=== J3_prismatic (n_dofs=1) ===
+  N=  1: max rel=2.611e-12  mean rel=1.416e-12  (1.1s)
+  N=  2: max rel=2.773e-12  mean rel=1.412e-12  (0.1s)
+  N=  4: max rel=5.686e-12  mean rel=1.913e-12  (0.2s)
+  N=  8: max rel=8.272e-12  mean rel=2.930e-12  (0.5s)
+  N= 16: max rel=5.598e-12  mean rel=2.133e-12  (1.3s)
+  N= 32: max rel=1.139e-11  mean rel=6.145e-12  (3.9s)
+
+=== J4_free_rev (n_dofs=7) ===
+[38;5;226m[Genesis] [23:57:07] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+[38;5;226m[Genesis] [23:57:08] [WARNING] Link 'arm' has dubious inertia [ixx=1.000e-02,iyy=1.000e-02,izz=1.000e-02] compared to the estimate from geometry [ixx=9.725e-05,iyy=2.200e-03,izz=2.200e-03] given material density 1500.000.[0m
+  N=  1: max rel=7.190e-03  mean rel=1.297e-03  (1.7s)
+  N=  2: max rel=1.243e+01  mean rel=2.916e+00  (0.5s)
+  N=  4: max rel=2.925e+02  mean rel=6.483e+01  (1.1s)
+  N=  8: max rel=5.634e+03  mean rel=1.280e+03  (2.7s)
+  N= 16: max rel=1.238e+04  mean rel=2.164e+03  (7.6s)
+  N= 32: max rel=2.855e+03  mean rel=7.581e+02  (23.9s)
+
+=== J5_chain3 (n_dofs=3) ===
+  N=  1: max rel=1.999e-02  mean rel=5.085e-03  (3.3s)
+  N=  2: max rel=2.964e-03  mean rel=8.303e-04  (0.3s)
+  N=  4: max rel=2.090e-03  mean rel=3.797e-04  (0.5s)
+  N=  8: max rel=4.022e-04  mean rel=6.237e-05  (1.3s)
+  N= 16: max rel=2.253e-04  mean rel=8.566e-05  (3.6s)
+  N= 32: max rel=1.773e-03  mean rel=7.413e-04  (10.7s)
+
+==============================================================================================================
+FINAL TABLE — max rel error across 10 seeds at t=0
+==============================================================================================================
+topology       |         N=1 |         N=2 |         N=4 |         N=8 |        N=16 |        N=32
+--------------------------------------------------------------------------------------------------------------
+J1_free        |   4.287e-11 |   1.188e-03 |   6.690e-03 |   2.615e-02 |   5.312e-02 |   7.763e-02
+J2_revolute    |   0.000e+00 |   0.000e+00 |   0.000e+00 |   0.000e+00 |   0.000e+00 |   0.000e+00
+J3_prismatic   |   2.611e-12 |   2.773e-12 |   5.686e-12 |   8.272e-12 |   5.598e-12 |   1.139e-11
+J4_free_rev    |   7.190e-03 |   1.243e+01 |   2.925e+02 |   5.634e+03 |   1.238e+04 |   2.855e+03
+J5_chain3      |   1.999e-02 |   2.964e-03 |   2.090e-03 |   4.022e-04 |   2.253e-04 |   1.773e-03
+
+==============================================================================================================
+FINAL TABLE — mean rel error across 10 seeds at t=0
+==============================================================================================================
+topology       |         N=1 |         N=2 |         N=4 |         N=8 |        N=16 |        N=32
+--------------------------------------------------------------------------------------------------------------
+J1_free        |   1.299e-11 |   6.423e-04 |   1.968e-03 |   5.257e-03 |   9.275e-03 |   1.415e-02
+J2_revolute    |   0.000e+00 |   0.000e+00 |   0.000e+00 |   0.000e+00 |   0.000e+00 |   0.000e+00
+J3_prismatic   |   1.416e-12 |   1.412e-12 |   1.913e-12 |   2.930e-12 |   2.133e-12 |   6.145e-12
+J4_free_rev    |   1.297e-03 |   2.916e+00 |   6.483e+01 |   1.280e+03 |   2.164e+03 |   7.581e+02
+J5_chain3      |   5.085e-03 |   8.303e-04 |   3.797e-04 |   6.237e-05 |   8.566e-05 |   7.413e-04

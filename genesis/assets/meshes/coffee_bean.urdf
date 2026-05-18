@@ -1,0 +1,16 @@
+<link name="link1">
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://my_robot/meshes/link1_visual.dae" scale="1 1 1"/>
+    </geometry>
+  </visual>
+
+  <!-- collision은 따로 정의 -->
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.20 0.10 0.05"/>
+    </geometry>
+  </collision>
+</link>

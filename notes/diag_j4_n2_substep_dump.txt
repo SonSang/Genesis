@@ -1,0 +1,8 @@
+J4 N=2 seed=1000 — full backward stage dump
+  root_x          ana=     5.333e-05  fd=     5.333e-05  diff=    -6.571e-12  rel= 1.232e-07
+  root_y          ana=    -1.567e-08  fd=    -2.062e-08  diff=     4.949e-09  rel= 2.400e-01
+  root_z          ana=     5.613e-08  fd=     4.882e-08  diff=     7.306e-09  rel= 1.496e-01
+  root_wx         ana=    -3.911e-08  fd=    -5.898e-12  diff=    -3.910e-08  rel= 6.630e+03
+  root_wy         ana=    -1.573e-08  fd=    -1.715e-09  diff=    -1.402e-08  rel= 8.173e+00
+  root_wz         ana=     1.480e-08  fd=     8.881e-09  diff=     5.918e-09  rel= 6.664e-01
+  arm_revolute    ana=     1.424e-08  fd=     1.798e-08  diff=    -3.740e-09  rel= 2.080e-01
