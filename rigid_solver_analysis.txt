@@ -1,3 +1,23 @@
+0. Basic Functions
+
+0-1. func_forward_kinematics
+
+0-2. func_COM_links
+
+0-3. func_forward_velocity_entity
+
+하나의 루프 안에서 parent 를 먼저 접근하고 뒤의 child 에서 앞의 parent 결과를 참조함. autodiff 위험.
+manual bw 를 사용할 것을 권장.
+
+0-3-1. Inputs
+
+- dofs_state:   cdof_vel, cdof_ang, vel
+
+0-3-2. Outputs
+
+- links_state:  cd_vel, cd_ang
+- dofs_state:   cdofd_ang, cdofd_vel
+
 1. Forward
 
 2. Backward
@@ -24,13 +44,110 @@ mujoco compatibility 가 꺼져있으면, 한번 cartesian space update 한 후 
 
 2-1-2-1-3. func_update_geoms_entity
 
+===> forward_velocity 가 빠져있는데 의도적인지 살펴볼것.
+
 2-1-3. (if not mujoco compatibility) func_copy_cartesian_space
 
 위에서 업데이트한 cartesian space value 들을 adjoint cache 에 저장한다.
 특히 dofs, links, joints, geoms states 의 output 들을 저장한다. 
 나중에 backward pass 에서 이 값들이 덮어씌워졌을 때 값들을 복원하기 위해 사용한다.
 
-- dofs_state: pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
-- links_state: pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat, cd_vel, cd_ang
+- dofs_state:   pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
+- links_state:  pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat, cd_vel, cd_ang
 - joints_state: xanchor, xaxis
-- geoms_state: pos, quat, verts_updated
+- geoms_state:  pos, quat, verts_updated
+
+===> forward_velocity 가 위에서 빠져있었는데, 이 함수에서는 forward_velocity 의 output 까지 저장해두고 있다. 위험할수도.
+
+2-2. kernel_zero_acc_smooth_bw
+
+dofs_state.acc_smooth_bw 를 모두 0 으로 초기화한다. Claude 가 추가한 것 같은데 이유는 명확하지 않음.
+필요하지 않으면 없애는게 나을 듯.
+
+- dofs_state:   acc_smooth_bw
+
+2-3. qd_zero_grad(dofs_state.acc_smooth_bw)
+
+위와 똑같은 목적의 함수인 걸로 보이는데, 역시 이유는 명확하지 않다.
+
+2-4. substep(f)
+
+self.backward = True 로 실행됨을 명심할 것.
+
+2-4-1. (if f == 0) kernel_save_adjoint_cache(f)
+
+2-4-1-1. func_save_adjoint_cache
+
+rigid_adjoint_cache 에다가 dofs_state, rigid_global_info 에서 필요한 정보들을 저장한다.
+여기서 저장한 정보들만 있으면 다른 모든 값들을 이 정보들에서 복원할 수 있다.
+
+- dofs_state: vel, acc
+- rigid_global_info: qpos
+
+2-4-2. kernel_step_1
+
+2-4-2-1. (if not is_forward_pos_updated) func_update_cartesian_space
+
+===> is_forward_pos_updated 가 어떤 역할을 하고 어떻게 설정되는지 알아봐야함.
+
+2-4-2-1-1. func_update_cartesian_space_entity
+
+2-4-2-1-1-1. func_forward_kinematics_entity
+
+2-4-2-1-1-2. func_COM_links_entity
+
+2-4-2-1-1-3. func_update_geoms_entity
+
+2-4-2-2. (if not is_forward_vel_updated) func_forward_velocity
+
+===> 여기도 마찬가지로 is_forward_vel_updated 에 대해서 알아봐야 함.
+
+2-4-2-2-1. func_forward_velocity_entity
+
+2-4-2-3. func_forward_dynamics
+
+2-4-2-3-1. func_compute_mass_matrix
+
+2-4-2-3-2. func_factor_mass
+
+2-4-2-3-3. func_torque_and_passive_force
+
+2-4-2-3-4. func_update_acc
+
+2-4-2-3-5. func_update_force
+
+2-4-2-3-6. func_bias_force
+
+2-4-2-3-7. func_compute_qacc
+
+2-4-3. _func_constraint_force
+
+collision 을 비롯한 다른 constraint 들로부터 constraint force 를 더한다. 일단은 무시해도 됨.
+
+2-4-4. kernel_step_2
+
+2-4-4-1. func_update_acc
+
+2-4-4-2. (if integrator != approximate_implicitfast) func_implicit_damping
+
+2-4-4-3. func_integrate
+
+2-4-4-4. (if not backward) func_copy_next_to_curr
+
+2-4-4-5. (if not backward && if not mujoco_compatibility) func_update_cartesian_space
+
+2-4-4-6. (if not backward && if not mujoco_compatibility) func_forward_velocity
+
+===> kernel_step_2 가 끝난 후에 self._is_forward_pos_updated, self._is_forward_vel_updated 를
+~self._enable_mujoco_compatibility 로 둔다. 따라서 기본적으로 True 가 된다고 생각하면 됨.
+
+2-4-5. (if self._requires_grad) kernel_save_adjoint_cache(f + 1)
+
+2-4-5-1. func_save_adjoint_cache
+
+(f + 1) step 에서의 정보들을 저장한다.
+
+2-5. kernel_copy_next_to_curr_no_check
+
+위에서 (2-4-4) 의 kernel_step_2 에서는 func_integrate 까지만 하고 backward 모드이므로 update_cartesian_space
+등을 하지 않는다. 

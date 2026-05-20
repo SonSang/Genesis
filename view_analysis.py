@@ -36,7 +36,41 @@ DEPTH_COLORS = [
     229,   # depth 8 — pale yellow
 ]
 DESC_COLOR = 244  # gray for free-form description lines
+BULLET_COLOR = 215  # warm orange — bullet/list lines (e.g. "- dofs_state: vel, acc")
 TREE_COLOR = 240  # darker gray for tree branch characters
+
+
+def is_bullet_line(line: str) -> bool:
+    """Detect bullet-style description lines starting with '- '."""
+    stripped = line.lstrip()
+    return stripped.startswith("- ") or stripped == "-"
+
+
+def split_bullet_line(line: str):
+    """Split '<lead>- name: rest' into (lead, '- name:', ' rest').
+
+    The colon (and everything after) is optional. If no colon, the entire
+    bullet portion after '- ' is treated as the name.
+    """
+    # leading whitespace before '-'
+    lead_len = len(line) - len(line.lstrip())
+    lead = line[:lead_len]
+    body = line[lead_len:]  # starts with '- ' or '-'
+    if body.startswith("- "):
+        after = body[2:]
+        prefix = "- "
+    else:
+        after = body[1:]
+        prefix = "-"
+    colon_idx = after.find(":")
+    if colon_idx == -1:
+        name = after
+        rest = ""
+    else:
+        name = after[:colon_idx]
+        rest = after[colon_idx + 1:]
+    head = prefix + name + (":" if colon_idx != -1 else "")
+    return lead, head, rest
 
 
 def ansi(code: int, s: str) -> str:
@@ -152,6 +186,11 @@ def render(nodes, use_color: bool) -> str:
             for desc_line in node["desc"]:
                 if desc_line == "":
                     out_lines.append(desc_indent)
+                elif is_bullet_line(desc_line):
+                    lead, head, rest = split_bullet_line(desc_line)
+                    head_styled = color(BULLET_COLOR, bold(head) if use_color else head)
+                    rest_styled = color(DESC_COLOR, rest) if rest else ""
+                    out_lines.append(desc_indent + lead + head_styled + rest_styled)
                 else:
                     out_lines.append(desc_indent + color(DESC_COLOR, desc_line))
 
@@ -203,6 +242,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   --c6: #0284c7;  /* sky blue */
   --c7: #db2777;  /* pink */
   --c8: #ca8a04;  /* dark yellow */
+  --bullet: #c2410c;  /* warm orange for bullet lines */
 }}
 @media (prefers-color-scheme: dark) {{
   :root {{
@@ -219,6 +259,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     --c6: #60a5fa;
     --c7: #f472b6;
     --c8: #facc15;
+    --bullet: #fb923c;
   }}
 }}
 * {{ box-sizing: border-box; }}
@@ -258,6 +299,23 @@ h1.doc-title {{
   margin: 6px 0 8px 12px;
   white-space: pre-wrap;
   font-family: inherit;
+}}
+.node-desc .bullet-line {{
+  display: block;
+  margin: 3px 0;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.92em;
+}}
+.node-desc .bullet-head {{
+  color: var(--bullet);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--bullet) 12%, transparent);
+  padding: 1px 6px;
+  border-radius: 3px;
+}}
+.node-desc .bullet-rest {{
+  color: var(--muted);
+  margin-left: 4px;
 }}
 {depth_css}
 .controls {{
@@ -335,8 +393,29 @@ def render_html(nodes, title: str) -> str:
             f'</span>'
         )
         if node["desc"]:
-            desc = "\n".join(node["desc"])
-            body_parts.append(f'  <div class="node-desc">{html_escape(desc)}</div>')
+            body_parts.append('  <div class="node-desc">')
+            buf = []  # consecutive non-bullet lines get joined into a single text block
+            def flush_buf():
+                if buf:
+                    body_parts.append(html_escape("\n".join(buf)))
+                    buf.clear()
+            for desc_line in node["desc"]:
+                if is_bullet_line(desc_line):
+                    flush_buf()
+                    lead, head, rest = split_bullet_line(desc_line)
+                    rest_html = (
+                        f'<span class="bullet-rest">{html_escape(rest)}</span>'
+                        if rest else ""
+                    )
+                    body_parts.append(
+                        f'<span class="bullet-line">{html_escape(lead)}'
+                        f'<span class="bullet-head">{html_escape(head)}</span>'
+                        f'{rest_html}</span>'
+                    )
+                else:
+                    buf.append(desc_line)
+            flush_buf()
+            body_parts.append('  </div>')
         body_parts.append("</div>")
     body = "\n".join(body_parts)
 
