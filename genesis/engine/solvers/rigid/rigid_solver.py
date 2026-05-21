@@ -83,7 +83,6 @@ from .abd.forward_kinematics import (
     kernel_forward_kinematics_links_geoms,
     kernel_masked_forward_kinematics_links_geoms,
     kernel_forward_velocity,
-    kernel_forward_velocity_one_link,
     kernel_masked_forward_velocity,
     kernel_forward_kinematics_entity,
     kernel_update_geoms,
@@ -193,6 +192,7 @@ from .abd.manual_bw import (
     kernel_manual_update_force_bw,
     kernel_manual_mm_assemble_bw,
     kernel_manual_mm_crb_aggregate_bw,
+    kernel_manual_forward_velocity_bw,
 )
 
 if TYPE_CHECKING:
@@ -1032,23 +1032,23 @@ class RigidSolver(KinematicSolver):
         else:
             self._func_constraint_force()
             kernel_step_2(
-                    self.dofs_state,
-                    self.dofs_info,
-                    self.links_info,
-                    self.links_state,
-                    self.joints_info,
-                    self.joints_state,
-                    self.entities_state,
-                    self.entities_info,
-                    self.geoms_info,
-                    self.geoms_state,
-                    self.collider._collider_state,
-                    self._rigid_global_info,
-                    self._static_rigid_sim_config,
-                    self.constraint_solver.contact_island.contact_island_state,
-                    self._is_backward,
-                    self._errno,
-                )
+                self.dofs_state,
+                self.dofs_info,
+                self.links_info,
+                self.links_state,
+                self.joints_info,
+                self.joints_state,
+                self.entities_state,
+                self.entities_info,
+                self.geoms_info,
+                self.geoms_state,
+                self.collider._collider_state,
+                self._rigid_global_info,
+                self._static_rigid_sim_config,
+                self.constraint_solver.contact_island.contact_island_state,
+                self._is_backward,
+                self._errno,
+            )
             self._is_forward_pos_updated = not self._enable_mujoco_compatibility
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
             if self._requires_grad:
@@ -1520,35 +1520,32 @@ class RigidSolver(KinematicSolver):
         envs_idx = self._scene._sanitize_envs_idx(None)
         self._debug_grad_dump(f"f={f} entry")
         if not self._enable_mujoco_compatibility:
-            # DIAGNOSTIC: split per-link kernel calls (mirror of update_cartesian_space split
-            # below). Single-kernel `kernel_forward_velocity.grad` drops the cross-link
-            # adjoint through `cd_{vel,ang}[parent_idx]`, which kills v.grad for child-joint
-            # qvel after the Coriolis chain (compute_qacc.grad / forward_dynamics_without_qacc.grad).
-            _MAX_LINKS = self._max_n_links_across_entities
-            for _offset in range(_MAX_LINKS):
-                kernel_forward_velocity_one_link(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
-                )
-            for _offset in reversed(range(_MAX_LINKS)):
-                kernel_forward_velocity_one_link.grad(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
-                )
+            # Single-kernel forward replay + manual cross-link reverse. The
+            # previous per-link split worked around Quadrants AD's silent drop
+            # on `cd_{vel,ang}[parent_idx]`; `kernel_manual_forward_velocity_bw`
+            # writes that chain explicitly (FP64-floor verified across
+            # J1/J2/J3/J4/J5 vs FD).
+            kernel_forward_velocity(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_manual_forward_velocity_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
             self._debug_grad_dump(f"f={f} after post-fwd_velocity.grad")
 
             # COM-links forward + .grad pair. Sits between forward_velocity.grad
@@ -1809,34 +1806,30 @@ class RigidSolver(KinematicSolver):
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
-            # DIAGNOSTIC: split per-link kernel calls to test whether cross-link adjoint
-            # attenuation propagates the missing Coriolis-chain grad to initial qvel (J4
-            # v.grad[6] = 0 vs FD 5.94e-5 hypothesis). NOTE: skips COM/geom backward.
-            _MAX_LINKS = self._max_n_links_across_entities
-            for _offset in range(_MAX_LINKS):
-                kernel_forward_velocity_one_link(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
-                )
-            for _offset in reversed(range(_MAX_LINKS)):
-                kernel_forward_velocity_one_link.grad(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
-                )
+            # Initial-substep mirror of the post-FK forward_velocity reverse:
+            # single-kernel forward replay (BW=True slot record) + manual
+            # cross-link reverse via `kernel_manual_forward_velocity_bw`.
+            kernel_forward_velocity(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_manual_forward_velocity_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
             # COM-links forward + .grad — same role as in post-FK section above.
             # Drains the cinr/cdof.grad populated by `fwd_dynamics_without_qacc.grad`
             # back into links_state.{pos,quat}.grad so the subsequent

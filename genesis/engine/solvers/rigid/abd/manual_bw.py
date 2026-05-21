@@ -601,6 +601,30 @@ def d_motion_cross_force(m_ang, m_vel, f_ang, f_vel, ang_g, vel_g):
 
 
 @qd.func
+def d_motion_cross_motion(s_ang, s_vel, m_ang, m_vel, ang_g, vel_g):
+    """Reverse of motion_cross_motion(s_ang, s_vel, m_ang, m_vel).
+
+    Forward (geom.py:437):
+        vel = s_ang × m_vel + s_vel × m_ang
+        ang = s_ang × m_ang
+
+    Chain rule (c=a×b ⇒ a.g += b × c.g, b.g += c.g × a):
+        s_ang.g += m_ang × ang.g + m_vel × vel.g
+        s_vel.g += m_ang × vel.g
+        m_ang.g += ang.g × s_ang + vel.g × s_vel
+        m_vel.g += vel.g × s_ang
+
+    Returns (s_ang_g, s_vel_g, m_ang_g, m_vel_g) — additive deltas.
+    """
+    return (
+        m_ang.cross(ang_g) + m_vel.cross(vel_g),
+        m_ang.cross(vel_g),
+        ang_g.cross(s_ang) + vel_g.cross(s_vel),
+        vel_g.cross(s_ang),
+    )
+
+
+@qd.func
 def d_inertial_mul(pos, I_mat, mass, vel, ang, ang_g, vel_g):
     """Reverse of inertial_mul(pos, I, mass, vel, ang).
 
@@ -1046,13 +1070,11 @@ def kernel_manual_COM_links_phase5_bw(
                         # j_quat[i_l] = j_quat_bw[i_l, n_joints].
                         for k in qd.static(range(3)):
                             links_state.j_pos_bw.grad[i_l, n_joints, i_b][k] = (
-                                links_state.j_pos_bw.grad[i_l, n_joints, i_b][k]
-                                + links_state.j_pos.grad[i_l, i_b][k]
+                                links_state.j_pos_bw.grad[i_l, n_joints, i_b][k] + links_state.j_pos.grad[i_l, i_b][k]
                             )
                         for k in qd.static(range(4)):
                             links_state.j_quat_bw.grad[i_l, n_joints, i_b][k] = (
-                                links_state.j_quat_bw.grad[i_l, n_joints, i_b][k]
-                                + links_state.j_quat.grad[i_l, i_b][k]
+                                links_state.j_quat_bw.grad[i_l, n_joints, i_b][k] + links_state.j_quat.grad[i_l, i_b][k]
                             )
                         # P8 consume j_pos / j_quat
                         for k in qd.static(range(3)):
@@ -1120,13 +1142,9 @@ def kernel_manual_COM_links_phase5_bw(
                             p_quat = links_state.quat[i_p, i_b]
                             # From j_pos_bw[0]: p_pos.grad += j_pos_bw_0.grad
                             #                   p_quat.grad += d_transform_by_quat__dq(l_info.pos, p_quat, j_pos_bw_0.grad)
-                            p_quat_grad_from_pos = d_transform_by_quat__dq(
-                                l_info_pos, p_quat, j_pos_bw_0_grad
-                            )
+                            p_quat_grad_from_pos = d_transform_by_quat__dq(l_info_pos, p_quat, j_pos_bw_0_grad)
                             # From j_quat_bw[0]: p_quat.grad += d_quat_mul__dlhs(p_quat, l_info.quat, j_quat_bw_0.grad)
-                            p_quat_grad_from_quat = d_quat_mul__dlhs(
-                                p_quat, l_info_quat, j_quat_bw_0_grad
-                            )
+                            p_quat_grad_from_quat = d_quat_mul__dlhs(p_quat, l_info_quat, j_quat_bw_0_grad)
 
                             for k in qd.static(range(3)):
                                 links_state.pos.grad[i_p, i_b][k] = (
@@ -1224,9 +1242,15 @@ def d_qd_transform_inertia_by_trans_quat(
     # (1) out_mass = i_mass  →  +out_mass_grad
     # (2) out_trans = trans · i_mass  →  +trans · out_trans_grad
     # (3) out_i has term hhT · i_mass  →  +<hhT, out_i_grad>
-    tx = trans[0]; ty = trans[1]; tz = trans[2]
-    txx = tx * tx; tyy = ty * ty; tzz = tz * tz
-    txy = tx * ty; txz = tx * tz; tyz = ty * tz
+    tx = trans[0]
+    ty = trans[1]
+    tz = trans[2]
+    txx = tx * tx
+    tyy = ty * ty
+    tzz = tz * tz
+    txy = tx * ty
+    txz = tx * tz
+    tyz = ty * tz
     hhT_dot_outi = (
         (tyy + tzz) * out_i_grad[0, 0]
         + (-txy) * out_i_grad[0, 1]
@@ -1239,9 +1263,7 @@ def d_qd_transform_inertia_by_trans_quat(
         + (txx + tyy) * out_i_grad[2, 2]
     )
     i_mass_grad = (
-        out_mass_grad
-        + tx * out_trans_grad[0] + ty * out_trans_grad[1] + tz * out_trans_grad[2]
-        + hhT_dot_outi
+        out_mass_grad + tx * out_trans_grad[0] + ty * out_trans_grad[1] + tz * out_trans_grad[2] + hhT_dot_outi
     )
 
     # ─── trans.grad: 2 sources
@@ -1298,8 +1320,12 @@ def d_qd_transform_inertia_by_trans_quat(
 
 @qd.func
 def d_qd_transform_pos_quat_by_trans_quat(
-    pos, quat, t_trans, t_quat,
-    new_pos_grad, new_quat_grad,
+    pos,
+    quat,
+    t_trans,
+    t_quat,
+    new_pos_grad,
+    new_quat_grad,
 ):
     """Reverse of `qd_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat)`.
 
@@ -1435,9 +1461,7 @@ def kernel_manual_COM_links_bw(
                                 + dofs_state.cdof_vel[i_d, i_b][1] * cdofvel_vel_g[1]
                                 + dofs_state.cdof_vel[i_d, i_b][2] * cdofvel_vel_g[2]
                             )
-                            dofs_state.vel.grad[i_d, i_b] = (
-                                dofs_state.vel.grad[i_d, i_b] + dot_ang + dot_vel
-                            )
+                            dofs_state.vel.grad[i_d, i_b] = dofs_state.vel.grad[i_d, i_b] + dot_ang + dot_vel
                             # P8 consume cdofvel.grad
                             for k in qd.static(range(3)):
                                 dofs_state.cdofvel_ang.grad[i_d, i_b][k] = 0.0
@@ -1579,8 +1603,7 @@ def kernel_manual_COM_links_bw(
 
                         for k in qd.static(range(3)):
                             links_state.j_pos_bw.grad[i_l, n_joints_5, i_b][k] = (
-                                links_state.j_pos_bw.grad[i_l, n_joints_5, i_b][k]
-                                + links_state.j_pos.grad[i_l, i_b][k]
+                                links_state.j_pos_bw.grad[i_l, n_joints_5, i_b][k] + links_state.j_pos.grad[i_l, i_b][k]
                             )
                         for k in qd.static(range(4)):
                             links_state.j_quat_bw.grad[i_l, n_joints_5, i_b][k] = (
@@ -1627,12 +1650,8 @@ def kernel_manual_COM_links_bw(
 
                         if i_p != -1:
                             p_quat_5 = links_state.quat[i_p, i_b]
-                            p_quat_grad_from_pos_5 = d_transform_by_quat__dq(
-                                l_info_pos_5, p_quat_5, j_pos_bw_0_grad_5
-                            )
-                            p_quat_grad_from_quat_5 = d_quat_mul__dlhs(
-                                p_quat_5, l_info_quat_5, j_quat_bw_0_grad_5
-                            )
+                            p_quat_grad_from_pos_5 = d_transform_by_quat__dq(l_info_pos_5, p_quat_5, j_pos_bw_0_grad_5)
+                            p_quat_grad_from_quat_5 = d_quat_mul__dlhs(p_quat_5, l_info_quat_5, j_quat_bw_0_grad_5)
                             for k in qd.static(range(3)):
                                 links_state.pos.grad[i_p, i_b][k] = (
                                     links_state.pos.grad[i_p, i_b][k] + j_pos_bw_0_grad_5[k]
@@ -1668,27 +1687,26 @@ def kernel_manual_COM_links_bw(
                 cinr_quat_g = links_state.cinr_quat.grad[i_l, i_b]
                 cinr_mass_g = links_state.cinr_mass.grad[i_l, i_b]
 
-                (mass_grad_from_cinr, trans_grad_from_cinr, quat_grad_from_cinr) = (
-                    d_qd_transform_inertia_by_trans_quat(
-                        inertial_i_const, mass, i_pos_primal, i_quat_primal, EPS,
-                        cinr_i_g, cinr_pos_g, cinr_quat_g, cinr_mass_g,
-                    )
+                (mass_grad_from_cinr, trans_grad_from_cinr, quat_grad_from_cinr) = d_qd_transform_inertia_by_trans_quat(
+                    inertial_i_const,
+                    mass,
+                    i_pos_primal,
+                    i_quat_primal,
+                    EPS,
+                    cinr_i_g,
+                    cinr_pos_g,
+                    cinr_quat_g,
+                    cinr_mass_g,
                 )
 
                 # Accumulate trans_grad → i_pos.grad
                 for k in qd.static(range(3)):
-                    links_state.i_pos.grad[i_l, i_b][k] = (
-                        links_state.i_pos.grad[i_l, i_b][k] + trans_grad_from_cinr[k]
-                    )
+                    links_state.i_pos.grad[i_l, i_b][k] = links_state.i_pos.grad[i_l, i_b][k] + trans_grad_from_cinr[k]
                 # i_quat.grad += quat_grad
                 for k in qd.static(range(4)):
-                    links_state.i_quat.grad[i_l, i_b][k] = (
-                        links_state.i_quat.grad[i_l, i_b][k] + quat_grad_from_cinr[k]
-                    )
+                    links_state.i_quat.grad[i_l, i_b][k] = links_state.i_quat.grad[i_l, i_b][k] + quat_grad_from_cinr[k]
                 # mass.grad → mass_shift.grad (mass = inertial_mass + mass_shift)
-                links_state.mass_shift.grad[i_l, i_b] = (
-                    links_state.mass_shift.grad[i_l, i_b] + mass_grad_from_cinr
-                )
+                links_state.mass_shift.grad[i_l, i_b] = links_state.mass_shift.grad[i_l, i_b] + mass_grad_from_cinr
                 # P8 consume cinr.grad
                 for r in qd.static(range(3)):
                     for c in qd.static(range(3)):
@@ -1702,12 +1720,8 @@ def kernel_manual_COM_links_bw(
                 # i_pos = i_pos_bw - root_COM → i_pos_bw.grad += i_pos.grad; root_COM.grad += -i_pos.grad
                 ip_g = links_state.i_pos.grad[i_l, i_b]
                 for k in qd.static(range(3)):
-                    links_state.i_pos_bw.grad[i_l, i_b][k] = (
-                        links_state.i_pos_bw.grad[i_l, i_b][k] + ip_g[k]
-                    )
-                    links_state.root_COM.grad[i_l, i_b][k] = (
-                        links_state.root_COM.grad[i_l, i_b][k] - ip_g[k]
-                    )
+                    links_state.i_pos_bw.grad[i_l, i_b][k] = links_state.i_pos_bw.grad[i_l, i_b][k] + ip_g[k]
+                    links_state.root_COM.grad[i_l, i_b][k] = links_state.root_COM.grad[i_l, i_b][k] - ip_g[k]
                 # P8 consume i_pos.grad
                 for k in qd.static(range(3)):
                     links_state.i_pos.grad[i_l, i_b][k] = 0.0
@@ -1744,9 +1758,8 @@ def kernel_manual_COM_links_bw(
                         # mass_sum.grad += -(root_COM_g · root_COM_bw) / mass_sum²
                         rcb = links_state.root_COM_bw[i_l, i_b]
                         rg_dot_rcb = root_COM_g[0] * rcb[0] + root_COM_g[1] * rcb[1] + root_COM_g[2] * rcb[2]
-                        links_state.mass_sum.grad[i_l, i_b] = (
-                            links_state.mass_sum.grad[i_l, i_b]
-                            - rg_dot_rcb / (mass_sum_val * mass_sum_val)
+                        links_state.mass_sum.grad[i_l, i_b] = links_state.mass_sum.grad[i_l, i_b] - rg_dot_rcb / (
+                            mass_sum_val * mass_sum_val
                         )
                     else:
                         # Degenerate: root_COM[i_r] = i_pos_bw[i_r]
@@ -1775,17 +1788,11 @@ def kernel_manual_COM_links_bw(
                 #   i_pos_bw.grad += mass · rcb_g
                 #   mass.grad += rcb_g · i_pos_bw
                 mass_grad = ms_g + (
-                    rcb_g[0] * i_pos_bw_primal[0]
-                    + rcb_g[1] * i_pos_bw_primal[1]
-                    + rcb_g[2] * i_pos_bw_primal[2]
+                    rcb_g[0] * i_pos_bw_primal[0] + rcb_g[1] * i_pos_bw_primal[1] + rcb_g[2] * i_pos_bw_primal[2]
                 )
-                links_state.mass_shift.grad[i_l, i_b] = (
-                    links_state.mass_shift.grad[i_l, i_b] + mass_grad
-                )
+                links_state.mass_shift.grad[i_l, i_b] = links_state.mass_shift.grad[i_l, i_b] + mass_grad
                 for k in qd.static(range(3)):
-                    links_state.i_pos_bw.grad[i_l, i_b][k] = (
-                        links_state.i_pos_bw.grad[i_l, i_b][k] + mass * rcb_g[k]
-                    )
+                    links_state.i_pos_bw.grad[i_l, i_b][k] = links_state.i_pos_bw.grad[i_l, i_b][k] + mass * rcb_g[k]
 
                 # (i_pos_bw[i_l], i_quat[i_l]) = qd_transform_pos_quat_by_trans_quat(
                 #     inertial_pos + i_pos_shift, inertial_quat, pos[i_l], quat[i_l]
@@ -1802,16 +1809,12 @@ def kernel_manual_COM_links_bw(
                 )
                 # t_trans_g_contrib = ipb_g (identity)
                 for k in qd.static(range(3)):
-                    links_state.pos.grad[i_l, i_b][k] = (
-                        links_state.pos.grad[i_l, i_b][k] + t_trans_g_contrib[k]
-                    )
+                    links_state.pos.grad[i_l, i_b][k] = links_state.pos.grad[i_l, i_b][k] + t_trans_g_contrib[k]
                     links_state.i_pos_shift.grad[i_l, i_b][k] = (
                         links_state.i_pos_shift.grad[i_l, i_b][k] + pos_g_contrib[k]
                     )
                 for k in qd.static(range(4)):
-                    links_state.quat.grad[i_l, i_b][k] = (
-                        links_state.quat.grad[i_l, i_b][k] + t_quat_g_contrib[k]
-                    )
+                    links_state.quat.grad[i_l, i_b][k] = links_state.quat.grad[i_l, i_b][k] + t_quat_g_contrib[k]
 
                 # P8 consume i_pos_bw / i_quat .grad
                 for k in qd.static(range(3)):
@@ -1889,9 +1892,7 @@ def kernel_manual_func_integrate_bw(
                 # Translation reverse: qpos_next[0..3] = qpos[0..3] + vel_next[0..3] * dt
                 for j in qd.static(range(3)):
                     qn_g = rigid_global_info.qpos_next.grad[q_start + j, i_b]
-                    rigid_global_info.qpos.grad[q_start + j, i_b] = (
-                        rigid_global_info.qpos.grad[q_start + j, i_b] + qn_g
-                    )
+                    rigid_global_info.qpos.grad[q_start + j, i_b] = rigid_global_info.qpos.grad[q_start + j, i_b] + qn_g
                     dofs_state.vel_next.grad[dof_start + j, i_b] = (
                         dofs_state.vel_next.grad[dof_start + j, i_b] + dt * qn_g
                     )
@@ -2073,3 +2074,263 @@ def kernel_manual_func_integrate_bw(
         vn_g = dofs_state.vel_next.grad[i_d, i_b]
         dofs_state.vel.grad[i_d, i_b] = dofs_state.vel.grad[i_d, i_b] + vn_g
         dofs_state.acc.grad[i_d, i_b] = dofs_state.acc.grad[i_d, i_b] + dt * vn_g
+
+
+# =========================================================================
+# `kernel_manual_forward_velocity_bw`: single-call manual reverse of
+# `kernel_forward_velocity` (replaces the per-link split currently used to
+# avoid Quadrants AD silent drop on cross-link `cd_{vel,ang}[parent_idx]`).
+#
+# Forward (per-link, leaf-iterated):
+#   cvel_vel/ang = parent.cd_vel/ang  (or 0 if root)
+#   for each joint i_j_ in 0..n_joints-1:
+#     (FREE only) for i_3 in 0..2:
+#       _vel = cdof_vel[ds+i_3] * vel[ds+i_3];  cvel_vel += _vel  (linear dofs)
+#       _ang = cdof_ang[ds+i_3] * vel[ds+i_3];  cvel_ang += _ang  (= 0 since cdof_ang linear = 0)
+#     for each dof i_d in joint:
+#       cdofd_ang[i_d], cdofd_vel[i_d] = motion_cross_motion(cvel_ang, cvel_vel, cdof_ang[i_d], cdof_vel[i_d])
+#     (BW slot copy: cd_*_bw[next] = cd_*_bw[curr])
+#     for each dof i_d (FREE: i_3+3) in joint:
+#       cvel_vel += cdof_vel[i_d] * vel[i_d]
+#       cvel_ang += cdof_ang[i_d] * vel[i_d]
+#   cd_vel[i_l] = cvel_vel;  cd_ang[i_l] = cvel_ang
+#
+# Reverse (leaf → root iteration; statement-reverse per joint):
+#   cd_vel.grad[i_l] → cd_vel_bw.grad[i_l, n_joints]; same for cd_ang
+#   for i_j_ in n_joints-1..0 (reverse):
+#     [d-rev]  cd_*_bw[next].grad → cdof_*.grad / vel.grad
+#     [c-rev]  cd_*_bw[curr].grad += cd_*_bw[next].grad; consume next
+#     [b-rev]  cdofd_*.grad → cd_*_bw[curr].grad / cdof_*.grad via d_motion_cross_motion
+#     [a-rev]  (FREE only) cd_*_bw[curr].grad → linear cdof_*.grad / vel.grad
+#   parent.cd_*.grad += cd_*_bw[i_l, 0].grad (cross-link, root → leaf accumulation 방향)
+#
+# Scope: FREE, REVOLUTE, PRISMATIC. SPHERICAL handled via the else branch of
+# forward_velocity (same chain as REVOLUTE/PRISMATIC — multi-dof joint).
+# Hibernation NOT supported (errno bit if encountered).
+# =========================================================================
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_forward_velocity_bw(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    errno: qd.Tensor,
+):
+    """Manual reverse of `kernel_forward_velocity` — single-call (no per-link
+    split). Replaces the diagnostic per-link split in `substep_pre_coupling_grad`
+    by computing the cross-link `cd_{vel,ang}[parent_idx]` chain explicitly.
+
+    Inputs (read .grad seeds):
+      - cd_vel.grad[i_l, i_b], cd_ang.grad[i_l, i_b]
+      - cd_vel_bw.grad[i_l, k, i_b], cd_ang_bw.grad[i_l, k, i_b]
+      - cdofd_ang.grad[i_d, i_b], cdofd_vel.grad[i_d, i_b]
+
+    Outputs (accumulated .grad):
+      - dofs_state.vel.grad[i_d, i_b]
+      - dofs_state.cdof_ang.grad[i_d, i_b], dofs_state.cdof_vel.grad[i_d, i_b]
+      - links_state.cd_vel.grad[parent_idx, i_b], links_state.cd_ang.grad[parent_idx, i_b]
+        (cross-link chain — equivalent to forward replay's BW=True
+        `cd_*_bw[i_l, 0] = parent.cd_*`)
+    """
+    qd.loop_config(
+        name="manual_forward_velocity_bw",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+        else:
+            n_in_e = entities_info.n_links[i_e]
+            # Leaf → root iteration so each link's cd_*_bw[0].grad (which
+            # accumulates into parent.cd_*.grad) is propagated *before* the
+            # parent's own iteration uses it.
+            for i_l_rev in range(n_in_e):
+                i_l = entities_info.link_end[i_e] - 1 - i_l_rev
+                I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+                i_p = links_info.parent_idx[I_l]
+
+                # ── Step 1 reverse: cd_*[i_l].grad → cd_*_bw[i_l, n_joints].grad
+                for k in qd.static(range(3)):
+                    links_state.cd_vel_bw.grad[i_l, n_joints, i_b][k] = (
+                        links_state.cd_vel_bw.grad[i_l, n_joints, i_b][k] + links_state.cd_vel.grad[i_l, i_b][k]
+                    )
+                    links_state.cd_ang_bw.grad[i_l, n_joints, i_b][k] = (
+                        links_state.cd_ang_bw.grad[i_l, n_joints, i_b][k] + links_state.cd_ang.grad[i_l, i_b][k]
+                    )
+                # consume cd_vel/cd_ang.grad[i_l]
+                for k in qd.static(range(3)):
+                    links_state.cd_vel.grad[i_l, i_b][k] = 0.0
+                    links_state.cd_ang.grad[i_l, i_b][k] = 0.0
+
+                # ── Step 2: iterate joints in reverse
+                for i_j_rev in range(n_joints):
+                    i_j_ = n_joints - 1 - i_j_rev
+                    i_j = i_j_ + links_info.joint_start[I_l]
+                    I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                    jt = joints_info.type[I_j]
+                    ds = joints_info.dof_start[I_j]
+                    de = joints_info.dof_end[I_j]
+                    curr_idx = i_j_
+                    next_idx = i_j_ + 1
+
+                    # ── [d-rev] cd_*_bw[next].grad → cdof_*.grad / vel.grad
+                    # Forward (FREE angular: i_3=0..2 at d=ds+3+i_3; else: d in ds..de):
+                    #   _vel = cdof_vel[d] * vel[d];  atomic_add(cd_vel_bw[next], _vel)
+                    #   _ang = cdof_ang[d] * vel[d];  atomic_add(cd_ang_bw[next], _ang)
+                    cvg_next = links_state.cd_vel_bw.grad[i_l, next_idx, i_b]
+                    cag_next = links_state.cd_ang_bw.grad[i_l, next_idx, i_b]
+                    if jt == gs.JOINT_TYPE.FREE:
+                        for i_3 in qd.static(range(3)):
+                            d_i = ds + 3 + i_3
+                            v_at_d = dofs_state.vel[d_i, i_b]
+                            cdv = dofs_state.cdof_vel[d_i, i_b]
+                            cda = dofs_state.cdof_ang[d_i, i_b]
+                            for k in qd.static(range(3)):
+                                dofs_state.cdof_vel.grad[d_i, i_b][k] = (
+                                    dofs_state.cdof_vel.grad[d_i, i_b][k] + cvg_next[k] * v_at_d
+                                )
+                                dofs_state.cdof_ang.grad[d_i, i_b][k] = (
+                                    dofs_state.cdof_ang.grad[d_i, i_b][k] + cag_next[k] * v_at_d
+                                )
+                            dot_vel = cdv[0] * cvg_next[0] + cdv[1] * cvg_next[1] + cdv[2] * cvg_next[2]
+                            dot_ang = cda[0] * cag_next[0] + cda[1] * cag_next[1] + cda[2] * cag_next[2]
+                            dofs_state.vel.grad[d_i, i_b] = dofs_state.vel.grad[d_i, i_b] + dot_vel + dot_ang
+                    else:
+                        for i_d in range(ds, de):
+                            v_at_d = dofs_state.vel[i_d, i_b]
+                            cdv = dofs_state.cdof_vel[i_d, i_b]
+                            cda = dofs_state.cdof_ang[i_d, i_b]
+                            for k in qd.static(range(3)):
+                                dofs_state.cdof_vel.grad[i_d, i_b][k] = (
+                                    dofs_state.cdof_vel.grad[i_d, i_b][k] + cvg_next[k] * v_at_d
+                                )
+                                dofs_state.cdof_ang.grad[i_d, i_b][k] = (
+                                    dofs_state.cdof_ang.grad[i_d, i_b][k] + cag_next[k] * v_at_d
+                                )
+                            dot_vel = cdv[0] * cvg_next[0] + cdv[1] * cvg_next[1] + cdv[2] * cvg_next[2]
+                            dot_ang = cda[0] * cag_next[0] + cda[1] * cag_next[1] + cda[2] * cag_next[2]
+                            dofs_state.vel.grad[i_d, i_b] = dofs_state.vel.grad[i_d, i_b] + dot_vel + dot_ang
+
+                    # ── [c-rev] cd_*_bw[next] = cd_*_bw[curr] → curr.grad += next.grad
+                    for k in qd.static(range(3)):
+                        links_state.cd_vel_bw.grad[i_l, curr_idx, i_b][k] = (
+                            links_state.cd_vel_bw.grad[i_l, curr_idx, i_b][k] + cvg_next[k]
+                        )
+                        links_state.cd_ang_bw.grad[i_l, curr_idx, i_b][k] = (
+                            links_state.cd_ang_bw.grad[i_l, curr_idx, i_b][k] + cag_next[k]
+                        )
+                    # consume next
+                    for k in qd.static(range(3)):
+                        links_state.cd_vel_bw.grad[i_l, next_idx, i_b][k] = 0.0
+                        links_state.cd_ang_bw.grad[i_l, next_idx, i_b][k] = 0.0
+
+                    # ── [b-rev] motion_cross_motion reverse:
+                    # Forward: (cdofd_ang[d_i], cdofd_vel[d_i]) =
+                    #     motion_cross_motion(cd_ang_bw[curr], cd_vel_bw[curr], cdof_ang[d_i], cdof_vel[d_i])
+                    # Reverse via d_motion_cross_motion(s_ang, s_vel, m_ang, m_vel, ang_g, vel_g)
+                    s_ang_primal = links_state.cd_ang_bw[i_l, curr_idx, i_b]
+                    s_vel_primal = links_state.cd_vel_bw[i_l, curr_idx, i_b]
+                    if jt == gs.JOINT_TYPE.FREE:
+                        # Angular dofs i_3=0..2 at d_i = ds + 3 + i_3 (linear cdofd_* are explicit 0)
+                        for i_3 in qd.static(range(3)):
+                            d_i = ds + 3 + i_3
+                            ang_g = dofs_state.cdofd_ang.grad[d_i, i_b]
+                            vel_g = dofs_state.cdofd_vel.grad[d_i, i_b]
+                            cda = dofs_state.cdof_ang[d_i, i_b]
+                            cdv = dofs_state.cdof_vel[d_i, i_b]
+                            s_ang_g, s_vel_g, m_ang_g, m_vel_g = d_motion_cross_motion(
+                                s_ang_primal, s_vel_primal, cda, cdv, ang_g, vel_g
+                            )
+                            for k in qd.static(range(3)):
+                                links_state.cd_ang_bw.grad[i_l, curr_idx, i_b][k] = (
+                                    links_state.cd_ang_bw.grad[i_l, curr_idx, i_b][k] + s_ang_g[k]
+                                )
+                                links_state.cd_vel_bw.grad[i_l, curr_idx, i_b][k] = (
+                                    links_state.cd_vel_bw.grad[i_l, curr_idx, i_b][k] + s_vel_g[k]
+                                )
+                                dofs_state.cdof_ang.grad[d_i, i_b][k] = (
+                                    dofs_state.cdof_ang.grad[d_i, i_b][k] + m_ang_g[k]
+                                )
+                                dofs_state.cdof_vel.grad[d_i, i_b][k] = (
+                                    dofs_state.cdof_vel.grad[d_i, i_b][k] + m_vel_g[k]
+                                )
+                            # consume cdofd_*.grad[d_i]
+                            for k in qd.static(range(3)):
+                                dofs_state.cdofd_ang.grad[d_i, i_b][k] = 0.0
+                                dofs_state.cdofd_vel.grad[d_i, i_b][k] = 0.0
+                        # Linear dofs (i_3=0..2 at d_i = ds + i_3): cdofd_* set to 0
+                        # (constant), reverse is no-op; just consume to mirror P8.
+                        for i_3 in qd.static(range(3)):
+                            d_i = ds + i_3
+                            for k in qd.static(range(3)):
+                                dofs_state.cdofd_ang.grad[d_i, i_b][k] = 0.0
+                                dofs_state.cdofd_vel.grad[d_i, i_b][k] = 0.0
+                    else:
+                        for i_d in range(ds, de):
+                            ang_g = dofs_state.cdofd_ang.grad[i_d, i_b]
+                            vel_g = dofs_state.cdofd_vel.grad[i_d, i_b]
+                            cda = dofs_state.cdof_ang[i_d, i_b]
+                            cdv = dofs_state.cdof_vel[i_d, i_b]
+                            s_ang_g, s_vel_g, m_ang_g, m_vel_g = d_motion_cross_motion(
+                                s_ang_primal, s_vel_primal, cda, cdv, ang_g, vel_g
+                            )
+                            for k in qd.static(range(3)):
+                                links_state.cd_ang_bw.grad[i_l, curr_idx, i_b][k] = (
+                                    links_state.cd_ang_bw.grad[i_l, curr_idx, i_b][k] + s_ang_g[k]
+                                )
+                                links_state.cd_vel_bw.grad[i_l, curr_idx, i_b][k] = (
+                                    links_state.cd_vel_bw.grad[i_l, curr_idx, i_b][k] + s_vel_g[k]
+                                )
+                                dofs_state.cdof_ang.grad[i_d, i_b][k] = (
+                                    dofs_state.cdof_ang.grad[i_d, i_b][k] + m_ang_g[k]
+                                )
+                                dofs_state.cdof_vel.grad[i_d, i_b][k] = (
+                                    dofs_state.cdof_vel.grad[i_d, i_b][k] + m_vel_g[k]
+                                )
+                            for k in qd.static(range(3)):
+                                dofs_state.cdofd_ang.grad[i_d, i_b][k] = 0.0
+                                dofs_state.cdofd_vel.grad[i_d, i_b][k] = 0.0
+
+                    # ── [a-rev] (FREE only) cd_*_bw[curr].grad → linear cdof_*.grad / vel.grad
+                    # Forward (FREE linear pre-motion_cross_motion): for i_3=0..2 at d_i = ds + i_3,
+                    #   _vel = cdof_vel[d_i] * vel[d_i];  atomic_add(cd_vel_bw[curr], _vel)
+                    #   _ang = cdof_ang[d_i] * vel[d_i];  atomic_add(cd_ang_bw[curr], _ang)
+                    # (cdof_vel[linear] = e_i_3 constant; cdof_ang[linear] = 0 constant)
+                    if jt == gs.JOINT_TYPE.FREE:
+                        cvg_curr = links_state.cd_vel_bw.grad[i_l, curr_idx, i_b]
+                        cag_curr = links_state.cd_ang_bw.grad[i_l, curr_idx, i_b]
+                        for i_3 in qd.static(range(3)):
+                            d_i = ds + i_3
+                            v_at_d = dofs_state.vel[d_i, i_b]
+                            cdv = dofs_state.cdof_vel[d_i, i_b]
+                            cda = dofs_state.cdof_ang[d_i, i_b]
+                            for k in qd.static(range(3)):
+                                dofs_state.cdof_vel.grad[d_i, i_b][k] = (
+                                    dofs_state.cdof_vel.grad[d_i, i_b][k] + cvg_curr[k] * v_at_d
+                                )
+                                dofs_state.cdof_ang.grad[d_i, i_b][k] = (
+                                    dofs_state.cdof_ang.grad[d_i, i_b][k] + cag_curr[k] * v_at_d
+                                )
+                            dot_vel = cdv[0] * cvg_curr[0] + cdv[1] * cvg_curr[1] + cdv[2] * cvg_curr[2]
+                            dot_ang = cda[0] * cag_curr[0] + cda[1] * cag_curr[1] + cda[2] * cag_curr[2]
+                            dofs_state.vel.grad[d_i, i_b] = dofs_state.vel.grad[d_i, i_b] + dot_vel + dot_ang
+
+                # ── Step 1 (initial cvel setup) reverse:
+                # Forward: cd_*_bw[i_l, 0, i_b] = parent.cd_*[i_p, i_b] (if i_p != -1) else 0
+                # Reverse: parent.cd_*.grad[i_p] += cd_*_bw[i_l, 0].grad; consume slot 0
+                slot0_v_g = links_state.cd_vel_bw.grad[i_l, 0, i_b]
+                slot0_a_g = links_state.cd_ang_bw.grad[i_l, 0, i_b]
+                if i_p != -1:
+                    for k in qd.static(range(3)):
+                        links_state.cd_vel.grad[i_p, i_b][k] = links_state.cd_vel.grad[i_p, i_b][k] + slot0_v_g[k]
+                        links_state.cd_ang.grad[i_p, i_b][k] = links_state.cd_ang.grad[i_p, i_b][k] + slot0_a_g[k]
+                # consume slot 0
+                for k in qd.static(range(3)):
+                    links_state.cd_vel_bw.grad[i_l, 0, i_b][k] = 0.0
+                    links_state.cd_ang_bw.grad[i_l, 0, i_b][k] = 0.0
