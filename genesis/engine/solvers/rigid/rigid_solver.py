@@ -190,6 +190,7 @@ from .abd.diff import (
 from .abd.manual_bw import (
     kernel_manual_func_integrate_bw,
     kernel_manual_uc_bw_one_link,
+    kernel_manual_uc_bw,
     kernel_manual_update_force_bw,
     kernel_manual_mm_assemble_bw,
     kernel_manual_mm_crb_aggregate_bw,
@@ -1602,25 +1603,22 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
             )
-            _MAX_LINKS = self._max_n_links_across_entities
-            for _offset in reversed(range(_MAX_LINKS)):
-                # Manual FK Jacobian-transpose replacing the auto-AD UCS.grad
-                # (see `notes/diffrigid_handoff_ucs_translation_drop.md` for the
-                # silent drop motivating this). Handles FREE / REVOLUTE /
-                # PRISMATIC / FIXED faithfully. SPHERICAL flips an errno bit
-                # which `check_errno` translates into an exception below.
-                kernel_manual_uc_bw_one_link(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_state=self.joints_state,
-                    joints_info=self.joints_info,
-                    dofs_info=self.dofs_info,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    errno=self._errno,
-                )
+            # Single-call manual FK Jacobian-transpose replacing the auto-AD
+            # UCS.grad (see `notes/diffrigid_handoff_ucs_translation_drop.md`
+            # for the silent drop motivating this). Iterates leaf→root inside
+            # one kernel launch. Handles FREE / REVOLUTE / PRISMATIC / FIXED;
+            # SPHERICAL flips an errno bit checked below.
+            kernel_manual_uc_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
             self._debug_grad_dump(f"f={f} after post-update_cartesian_space.grad")
 
         is_grad_valid = kernel_begin_backward_substep(
@@ -1872,24 +1870,19 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
             )
-            for _offset in reversed(range(_MAX_LINKS)):
-                # Manual FK Jacobian-transpose replacing the auto-AD UCS.grad
-                # (see `notes/diffrigid_handoff_ucs_translation_drop.md` for the
-                # silent drop motivating this). Handles FREE / REVOLUTE /
-                # PRISMATIC / FIXED faithfully. SPHERICAL flips an errno bit
-                # which `check_errno` translates into an exception below.
-                kernel_manual_uc_bw_one_link(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_state=self.joints_state,
-                    joints_info=self.joints_info,
-                    dofs_info=self.dofs_info,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    errno=self._errno,
-                )
+            # Single-call manual FK Jacobian-transpose (see post-coupling
+            # site for explanation). Iterates leaf→root inside one launch.
+            kernel_manual_uc_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
             self._debug_grad_dump(f"f={f} after initial-UCS+FV.grad (end)")
 
         # Change back to forward mode

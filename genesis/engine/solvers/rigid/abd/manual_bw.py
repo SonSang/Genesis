@@ -549,6 +549,215 @@ def kernel_manual_uc_bw_one_link(
             # bit (caller must check + raise).
 
 
+@qd.kernel(fastcache=True)
+def kernel_manual_uc_bw(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    errno: qd.Tensor,
+):
+    """Single-call manual reverse of `kernel_forward_kinematics_fk_only`.
+    Same per-link body as `kernel_manual_uc_bw_one_link` but iterates the
+    links of each entity from leaf to root inside one kernel launch so a
+    child's `parent.{pos,quat}.grad` write completes before the parent's
+    own iteration consumes it.
+
+    Joint types supported: FREE / REVOLUTE / PRISMATIC / FIXED.
+    SPHERICAL flips an errno bit (caller must check + raise).
+    """
+    qd.loop_config(
+        name="manual_uc_bw",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        n_in_e = entities_info.n_links[i_e]
+        for i_l_rev in range(n_in_e):
+            i_l = entities_info.link_end[i_e] - 1 - i_l_rev
+            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+            i_j = links_info.joint_start[I_l]
+            I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+            joint_type = joints_info.type[I_j]
+            q_start = joints_info.q_start[I_j]
+            dof_start = joints_info.dof_start[I_j]
+
+            if joint_type == gs.JOINT_TYPE.FREE:
+                pos_grad = links_state.pos.grad[i_l, i_b]
+                quat_grad = links_state.quat.grad[i_l, i_b]
+                xanchor_grad = joints_state.xanchor.grad[i_j, i_b]
+                for j in qd.static(range(3)):
+                    rigid_global_info.qpos.grad[q_start + j, i_b] = (
+                        rigid_global_info.qpos.grad[q_start + j, i_b] + pos_grad[j] + xanchor_grad[j]
+                    )
+                for j in qd.static(range(4)):
+                    rigid_global_info.qpos.grad[q_start + 3 + j, i_b] = (
+                        rigid_global_info.qpos.grad[q_start + 3 + j, i_b] + quat_grad[j]
+                    )
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                    joints_state.xanchor.grad[i_j, i_b][j] = 0.0
+                    joints_state.xaxis.grad[i_j, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
+
+            elif joint_type == gs.JOINT_TYPE.REVOLUTE:
+                I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
+                axis = dofs_info.motion_ang[I_d]
+                angle = rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+                rotvec = axis * angle
+                qloc = gu.qd_rotvec_to_quat(rotvec, rigid_global_info.EPS[None])
+                parent_idx = links_info.parent_idx[I_l]
+                arm_pos_grad = links_state.pos.grad[i_l, i_b]
+                arm_quat_grad = links_state.quat.grad[i_l, i_b]
+
+                if parent_idx != -1:
+                    parent_quat = links_state.quat[parent_idx, i_b]
+                    arm_local = links_info.pos[I_l]
+                    parent_quat_grad_from_pos = d_transform_by_quat__dq(arm_local, parent_quat, arm_pos_grad)
+                    parent_quat_grad_from_quat = d_quat_mul__dlhs(parent_quat, qloc, arm_quat_grad)
+                    qloc_grad = d_quat_mul__drhs(parent_quat, qloc, arm_quat_grad)
+
+                    xanchor_grad = joints_state.xanchor.grad[i_j, i_b]
+                    xaxis_grad = joints_state.xaxis.grad[i_j, i_b]
+                    joint_pos_off = joints_info.pos[I_j]
+                    parent_quat_grad_from_xanchor_via_quat = d_transform_by_quat__dq(
+                        joint_pos_off, parent_quat, xanchor_grad
+                    )
+                    parent_quat_grad_from_xaxis = d_transform_by_quat__dq(axis, parent_quat, xaxis_grad)
+                    parent_quat_grad_from_xanchor_via_pos = d_transform_by_quat__dq(
+                        arm_local, parent_quat, xanchor_grad
+                    )
+
+                    rotvec_grad = d_rotvec_to_quat__drotvec(rotvec, rigid_global_info.EPS[None], qloc_grad)
+                    angle_grad = axis[0] * rotvec_grad[0] + axis[1] * rotvec_grad[1] + axis[2] * rotvec_grad[2]
+                    rigid_global_info.qpos.grad[q_start, i_b] = rigid_global_info.qpos.grad[q_start, i_b] + angle_grad
+
+                    for j in qd.static(range(3)):
+                        links_state.pos.grad[parent_idx, i_b][j] = (
+                            links_state.pos.grad[parent_idx, i_b][j] + arm_pos_grad[j] + xanchor_grad[j]
+                        )
+                    for j in qd.static(range(4)):
+                        links_state.quat.grad[parent_idx, i_b][j] = (
+                            links_state.quat.grad[parent_idx, i_b][j]
+                            + parent_quat_grad_from_pos[j]
+                            + parent_quat_grad_from_quat[j]
+                            + parent_quat_grad_from_xanchor_via_quat[j]
+                            + parent_quat_grad_from_xaxis[j]
+                            + parent_quat_grad_from_xanchor_via_pos[j]
+                        )
+                    for j in qd.static(range(3)):
+                        joints_state.xanchor.grad[i_j, i_b][j] = 0.0
+                        joints_state.xaxis.grad[i_j, i_b][j] = 0.0
+                else:
+                    quat_init = links_info.quat[I_l]
+                    qloc_grad = d_quat_mul__drhs(quat_init, qloc, arm_quat_grad)
+                    rotvec_grad = d_rotvec_to_quat__drotvec(rotvec, rigid_global_info.EPS[None], qloc_grad)
+                    angle_grad = axis[0] * rotvec_grad[0] + axis[1] * rotvec_grad[1] + axis[2] * rotvec_grad[2]
+                    rigid_global_info.qpos.grad[q_start, i_b] = rigid_global_info.qpos.grad[q_start, i_b] + angle_grad
+
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
+
+            elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
+                axis = dofs_info.motion_vel[I_d]
+                displacement = rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+                parent_idx = links_info.parent_idx[I_l]
+                arm_pos_grad = links_state.pos.grad[i_l, i_b]
+                arm_quat_grad = links_state.quat.grad[i_l, i_b]
+
+                if parent_idx != -1:
+                    parent_quat = links_state.quat[parent_idx, i_b]
+                    quat_init = gu.qd_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
+                    arm_local = links_info.pos[I_l]
+                    xaxis = gu.qd_transform_by_quat(axis, quat_init)
+                    displacement_grad = (
+                        xaxis[0] * arm_pos_grad[0] + xaxis[1] * arm_pos_grad[1] + xaxis[2] * arm_pos_grad[2]
+                    )
+                    xaxis_grad = qd.Vector(
+                        [
+                            arm_pos_grad[0] * displacement,
+                            arm_pos_grad[1] * displacement,
+                            arm_pos_grad[2] * displacement,
+                        ],
+                        dt=gs.qd_float,
+                    )
+                    quat_init_grad_from_xaxis = d_transform_by_quat__dq(axis, quat_init, xaxis_grad)
+                    quat_init_grad_total = qd.Vector(
+                        [
+                            quat_init_grad_from_xaxis[0] + arm_quat_grad[0],
+                            quat_init_grad_from_xaxis[1] + arm_quat_grad[1],
+                            quat_init_grad_from_xaxis[2] + arm_quat_grad[2],
+                            quat_init_grad_from_xaxis[3] + arm_quat_grad[3],
+                        ],
+                        dt=gs.qd_float,
+                    )
+                    parent_quat_grad_from_quat = d_quat_mul__dlhs(
+                        parent_quat, links_info.quat[I_l], quat_init_grad_total
+                    )
+                    parent_quat_grad_from_pos = d_transform_by_quat__dq(arm_local, parent_quat, arm_pos_grad)
+                    rigid_global_info.qpos.grad[q_start, i_b] = (
+                        rigid_global_info.qpos.grad[q_start, i_b] + displacement_grad
+                    )
+                    for j in qd.static(range(3)):
+                        links_state.pos.grad[parent_idx, i_b][j] = (
+                            links_state.pos.grad[parent_idx, i_b][j] + arm_pos_grad[j]
+                        )
+                    for j in qd.static(range(4)):
+                        links_state.quat.grad[parent_idx, i_b][j] = (
+                            links_state.quat.grad[parent_idx, i_b][j]
+                            + parent_quat_grad_from_pos[j]
+                            + parent_quat_grad_from_quat[j]
+                        )
+                else:
+                    quat_init = links_info.quat[I_l]
+                    xaxis = gu.qd_transform_by_quat(axis, quat_init)
+                    displacement_grad = (
+                        xaxis[0] * arm_pos_grad[0] + xaxis[1] * arm_pos_grad[1] + xaxis[2] * arm_pos_grad[2]
+                    )
+                    rigid_global_info.qpos.grad[q_start, i_b] = (
+                        rigid_global_info.qpos.grad[q_start, i_b] + displacement_grad
+                    )
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
+
+            elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+
+            elif joint_type == gs.JOINT_TYPE.FIXED:
+                parent_idx = links_info.parent_idx[I_l]
+                arm_pos_grad = links_state.pos.grad[i_l, i_b]
+                arm_quat_grad = links_state.quat.grad[i_l, i_b]
+                if parent_idx != -1:
+                    parent_quat = links_state.quat[parent_idx, i_b]
+                    arm_local = links_info.pos[I_l]
+                    parent_quat_grad_from_pos = d_transform_by_quat__dq(arm_local, parent_quat, arm_pos_grad)
+                    parent_quat_grad_from_quat = d_quat_mul__dlhs(parent_quat, links_info.quat[I_l], arm_quat_grad)
+                    for j in qd.static(range(3)):
+                        links_state.pos.grad[parent_idx, i_b][j] = (
+                            links_state.pos.grad[parent_idx, i_b][j] + arm_pos_grad[j]
+                        )
+                    for j in qd.static(range(4)):
+                        links_state.quat.grad[parent_idx, i_b][j] = (
+                            links_state.quat.grad[parent_idx, i_b][j]
+                            + parent_quat_grad_from_pos[j]
+                            + parent_quat_grad_from_quat[j]
+                        )
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
+
+
 # =========================================================================
 # Manual reverse for `func_update_force` (Step 5 sub-3).
 #
