@@ -171,6 +171,42 @@ def kernel_forward_kinematics(
 
 
 @qd.kernel(fastcache=True)
+def kernel_forward_kinematics_fk_only(
+    envs_idx: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """FK-only single-call kernel. Same as `kernel_forward_kinematics` but
+    skips `func_COM_links` / `func_forward_velocity_batch` — those are
+    handled by separate forward-replay + manual-reverse pairs in
+    `substep_pre_coupling_grad`. Used as the BW=True forward replay
+    before `kernel_manual_uc_bw_one_link`."""
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
+        func_forward_kinematics_batch(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
+
+
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,

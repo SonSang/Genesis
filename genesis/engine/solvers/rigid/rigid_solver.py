@@ -93,6 +93,7 @@ from .abd.forward_kinematics import (
     kernel_COM_links,
     kernel_update_cartesian_space,
     kernel_update_cartesian_space_one_link,
+    kernel_forward_kinematics_fk_only,
 )
 from .abd.forward_dynamics import (
     func_actuation,
@@ -1584,25 +1585,24 @@ class RigidSolver(KinematicSolver):
             )
             self._debug_grad_dump(f"f={f} after post-COM_links.grad")
 
-            # DIAGNOSTIC: split per-link kernel calls to test if cross-link adjoint attenuation
-            # in `kernel_update_cartesian_space.grad` is caused by the single-kernel outer
-            # link loop. For J4 entity has 2 links — forward in order, backward in reverse.
-            # NOTE: skips COM/geom backward (loss in J4 only uses links_pos).
+            # Single-call FK-only forward replay (BW=True) populates link
+            # `pos_bw / quat_bw` slots for the manual reverse below. COM /
+            # geom updates are intentionally skipped — handled by their own
+            # forward+reverse pairs above.
+            kernel_forward_kinematics_fk_only(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
             _MAX_LINKS = self._max_n_links_across_entities
-            for _offset in range(_MAX_LINKS):
-                kernel_update_cartesian_space_one_link(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_state=self.joints_state,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    dofs_info=self.dofs_info,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
-                )
             for _offset in reversed(range(_MAX_LINKS)):
                 # Manual FK Jacobian-transpose replacing the auto-AD UCS.grad
                 # (see `notes/diffrigid_handoff_ucs_translation_drop.md` for the
@@ -1859,20 +1859,19 @@ class RigidSolver(KinematicSolver):
                 is_backward=True,
             )
             self._debug_grad_dump(f"f={f} after initial-COM_links.grad")
-            for _offset in range(_MAX_LINKS):
-                kernel_update_cartesian_space_one_link(
-                    _offset,
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_state=self.joints_state,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    dofs_info=self.dofs_info,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=True,
-                )
+            kernel_forward_kinematics_fk_only(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
             for _offset in reversed(range(_MAX_LINKS)):
                 # Manual FK Jacobian-transpose replacing the auto-AD UCS.grad
                 # (see `notes/diffrigid_handoff_ucs_translation_drop.md` for the
