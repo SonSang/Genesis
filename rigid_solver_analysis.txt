@@ -18,6 +18,64 @@ manual bw 를 사용할 것을 권장.
 - links_state:  cd_vel, cd_ang
 - dofs_state:   cdofd_ang, cdofd_vel
 
+0-4. func_update_geoms
+
+0-5. func_compute_mass_matrix
+
+0-6. func_factor_mass
+
+0-7. func_torque_and_passive_force
+
+0-8. func_update_acc
+
+0-9. func_update_force
+
+0-10. func_bias_force
+
+0-11. func_compute_qacc
+
+아래의 (0-12) func_solve_mass 함수로 acc_smooth 를 먼저 계산하고 그 값을 acc 에다가 복사하기만 한다.
+
+0-11-1. Inputs
+
+- dofs_state: force
+- rigid_global_info: mass_mat_L, mass_mat_D_inv
+
+0-11-2. Outputs
+
+- dofs_state: acc_smooth, acc
+
+0-12. func_solve_mass
+
+vec = dofs_state.force, out = dofs_state.acc_smooth 로 둬서 F = Ma 식을 다음 (0-13) func_solve_mass_entity 함수로 푼다.
+이를 통해 acc_smooth 에다가 먼저 acceleration 을 계산해서 저장한다.
+
+0-12-1. Inputs
+
+- dofs_state: force
+- rigid_global_info: mass_mat_L, mass_mat_D_inv
+
+0-12-2. Outputs
+
+- dofs_state: acc_smooth
+
+0-13. func_solve_mass_entity
+
+한 entity 에 해당하는 dof 의 mass matrix M 에 대해서 vec = M @ out 을 풀어서 out = M^{-1} @ vec 을 구한다.
+
+M = L * D * L^T 로 이미 LDLT 분해되어 있다 (mass_mat_L 의 lower triangle + mass_mat_D_inv 의 diagonal).
+
+이 함수의 grad 는 autodiff 에 의해서 관리되지 않는다. 나중에 Inverse Function Theorem (IFT) 로 manual 하게 계산한다.
+
+0-13-1. Inputs
+
+- vec
+- rigid_global_info: mass_mat_L, mass_mat_D_inv
+
+0-13-2. Outputs
+
+- out
+
 1. Forward
 
 2. Backward
@@ -58,17 +116,6 @@ mujoco compatibility 가 꺼져있으면, 한번 cartesian space update 한 후 
 - geoms_state:  pos, quat, verts_updated
 
 ===> forward_velocity 가 위에서 빠져있었는데, 이 함수에서는 forward_velocity 의 output 까지 저장해두고 있다. 위험할수도.
-
-2-2. kernel_zero_acc_smooth_bw
-
-dofs_state.acc_smooth_bw 를 모두 0 으로 초기화한다. Claude 가 추가한 것 같은데 이유는 명확하지 않음.
-필요하지 않으면 없애는게 나을 듯.
-
-- dofs_state:   acc_smooth_bw
-
-2-3. qd_zero_grad(dofs_state.acc_smooth_bw)
-
-위와 똑같은 목적의 함수인 걸로 보이는데, 역시 이유는 명확하지 않다.
 
 2-4. substep(f)
 
@@ -151,3 +198,10 @@ collision 을 비롯한 다른 constraint 들로부터 constraint force 를 더�
 
 위에서 (2-4-4) 의 kernel_step_2 에서는 func_integrate 까지만 하고 backward 모드이므로 update_cartesian_space
 등을 하지 않는다. 
+
+2-6. kernel_manual_compute_qacc_bw
+
+func_compute_qacc 의 manual backward pass 이다. Inverse Function Theorem (IFT) 를 사용해서 acc.grad 로부터 
+force.grad 와 mass_mat.grad 를 계산한다. 주의할 점은 func_compute_qacc 는 mass_mat_L, mass_mat_D_inv 를 사용
+해서 acc 를 계산하지만 backward pass 에서는 이 LDLT 분해 행렬들에 대해서 grad 를 계산하지 않고 mass_mat.grad 를 바로
+계산한다는 점이다. 하지만 이 분해 행렬들은 (현재로선) 여기에서밖에 사용되지 않으므로 괜찮다.
