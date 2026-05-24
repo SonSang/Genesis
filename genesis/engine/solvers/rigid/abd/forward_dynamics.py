@@ -651,12 +651,6 @@ def kernel_manual_compute_qacc_bw(
 ):
     """Manual backward for `func_compute_qacc` via Implicit Function Theorem.
 
-    Replaces the Quadrants-traced reverse path
-    (`kernel_compute_qacc.grad` + Phase B externals
-    `kernel_solve_mass_step1_one_dof_bw` (.fwd + .grad) +
-    `kernel_solve_mass_step2_reverse_bw`) which silently drops the adjoint
-    chain inside `func_solve_mass_entity` (cross-iter same-buffer reads).
-
     Forward chain (`func_compute_qacc`):
         acc_smooth = M^{-1} . force   (via LDLT solve in `func_solve_mass`)
         acc[i]     = acc_smooth[i]    (identity copy)
@@ -682,8 +676,22 @@ def kernel_manual_compute_qacc_bw(
         Step 2:        v = D^{-1} . u
         Step 3: solve L   . delta_force_grad = v      (ascending i_d)
 
-    Scratch: reuses `dofs_state.acc_smooth_bw[0/1]` since its forward
-    intermediate values are dead by the time this kernel runs.
+    Inputs vs outputs (note the asymmetry between the values *read* from
+    `rigid_global_info` and the grad fields *written* into it):
+        Reads:
+          - dofs_state.acc.grad, dofs_state.acc_smooth.grad   (seed)
+          - rigid_global_info.mass_mat_L                       (LDLT solve)
+          - rigid_global_info.mass_mat_D_inv                   (LDLT solve)
+          - dofs_state.acc_smooth                              (IFT outer product)
+        Writes:
+          - dofs_state.force.grad                              (M^{-1} . seed)
+          - rigid_global_info.mass_mat.grad                    (IFT seed)
+          - dofs_state.acc.grad, dofs_state.acc_smooth.grad    (consumed → 0)
+
+    The dense `mass_mat` is *not* read here (the forward already factored it
+    into `mass_mat_L` / `mass_mat_D_inv`), but its `.grad` is the parameter
+    the IFT chain naturally exposes, so this kernel is the only place
+    `mass_mat.grad` gets populated in the backward path.
     """
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.force.shape[1]):

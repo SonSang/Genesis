@@ -1475,36 +1475,6 @@ class RigidSolver(KinematicSolver):
             rigid_adjoint_cache=self._rigid_adjoint_cache,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-        # Clear `acc_smooth_bw` value AND its `.grad` before this backward
-        # substep's work. Two leak channels:
-        #
-        #   (1) value: previous backward substep's per-DOF Step 1 writes
-        #       leak into this substep's Step 2 BW inside `self.substep(f)`.
-        #   (2) `.grad`: `kernel_compute_qacc.grad` and
-        #       `kernel_solve_mass_step2_reverse_bw` both atomic_add into
-        #       `acc_smooth_bw.grad`; without explicit clearing it
-        #       accumulates across substeps, producing the multi-step
-        #       `ana[t] = FD[t] + FD[t+1]` over-counting on single-link cases.
-        #
-        # NB: a kernel-side `.grad = 0.0` loop is insufficient — Quadrants
-        # silently drops `.grad` writes from inside `@qd.kernel`. The Python-
-        # side `qd_zero_grad` goes through `qd_to_torch(grad, copy=False)
-        # .zero_()`, an in-place memset on the underlying device buffer.
-        #
-        # Known issue: multi-link entities (J4/J5) and J1 multistep also carry
-        # stale residue on cdof_*, cinr_*, cd_*, cfrc_* `.grad` fields at the
-        # start of substep t < N-1's backward (see
-        # `notes/diag_j1_n2_substep_leak.txt` and
-        # `notes/diag_j1_n2_relerror_sweep.txt` — N=2 t=0 shows ~1e-4 rel
-        # error vs FP64-floor at N=1 / t=N-1). Naively zeroing the candidate
-        # fields here did NOT recover J1 multistep precision (likely those
-        # `.grad` values carry partial legitimate chain contributions even
-        # though they "leak" past substep end). Identifying the exact leaking
-        # field set is tracked as a follow-up (separate from the manual LDLT
-        # backward fix that lives below).
-        if self._requires_grad:
-            kernel_zero_acc_smooth_bw(self.dofs_state)
-            qd_zero_grad(self.dofs_state.acc_smooth_bw)
         self.substep(f)
         # =================== Backward substep ======================
         # `kernel_prepare_backward_substep` restored qpos/vel to their pre-integrate values
@@ -1663,39 +1633,15 @@ class RigidSolver(KinematicSolver):
         )
         self._debug_grad_dump(f"f={f} after step_2.grad")
 
-        # Manual backward for `func_compute_qacc` (IFT). Replaces the previous
-        # Quadrants-traced `kernel_compute_qacc.grad` + Phase B externals
-        # (per-DOF Step 1 forward replay + reverse, Step 2 manual reverse) which
-        # silently dropped the adjoint chain inside `func_solve_mass_entity` and
-        # — worse — required the BW path of `func_solve_mass_entity` to skip
-        # Step 1 entirely, leaving `acc_smooth = 0` (and hence `acc = 0`,
-        # `vel_next = 0`, `qpos_next = identity`) during this substep's
-        # `self.substep(f)` forward replay. That corrupted forward primal caused
-        # the J4/J5 multistep `control_dofs_force` gradient mismatch (the FK
-        # reverse was running on `qpos = identity`, collapsing every
-        # quaternion-derivative term).
-        #
-        # `func_solve_mass_entity` now runs Step 1 in BW mode too (writing into
-        # `acc_smooth_bw[0]`), so the forward replay produces correct primal.
-        # The manual kernel reads `dofs_state.acc.grad` and writes
-        # `dofs_state.force.grad` directly via M^-1 (same LDLT algorithm as
-        # forward — M = L^T D L is symmetric so M^-T = M^-1). `mass_mat.grad`
-        # is intentionally not seeded: `kernel_compute_mass_matrix.grad` is
-        # not invoked downstream, so the chain would die regardless.
+        # Manual backward for `func_compute_qacc` via the Implicit Function
+        # Theorem. See `kernel_manual_compute_qacc_bw` docstring for the
+        # full chain (including the `mass_mat.grad` IFT seed it emits).
         kernel_manual_compute_qacc_bw(
             dofs_state=self.dofs_state,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-        # `mass_mat.grad` is already seeded directly by
-        # `kernel_manual_compute_qacc_bw` via IFT (-force_contrib (x) acc_smooth).
-        # Downstream `kernel_compute_mass_matrix.grad` is currently not invoked
-        # — its kernel body mixes for-loops with straight-line statements and
-        # Quadrants AD rejects the reverse ("reverse_segments@68 Invalid program
-        # input for autodiff"). Splitting the mass-matrix construction into
-        # isolated-statement kernels (or, preferably, writing a manual backward
-        # mirroring `kernel_manual_compute_qacc_bw`) is tracked as a follow-up.
         self._debug_grad_dump(f"f={f} after compute_qacc.grad")
         kernel_copy_acc(
             f=f,
