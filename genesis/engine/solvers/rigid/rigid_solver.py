@@ -190,7 +190,7 @@ from .abd.diff import (
 from .abd.manual_bw import (
     kernel_manual_func_integrate_bw,
     kernel_manual_uc_bw_one_link,
-    kernel_manual_uc_bw,
+    kernel_manual_fk_only_bw,
     kernel_manual_update_force_bw,
     kernel_manual_mm_assemble_bw,
     kernel_manual_mm_crb_aggregate_bw,
@@ -1608,7 +1608,7 @@ class RigidSolver(KinematicSolver):
             # for the silent drop motivating this). Iterates leaf→root inside
             # one kernel launch. Handles FREE / REVOLUTE / PRISMATIC / FIXED;
             # SPHERICAL flips an errno bit checked below.
-            kernel_manual_uc_bw(
+            kernel_manual_fk_only_bw(
                 links_state=self.links_state,
                 links_info=self.links_info,
                 joints_state=self.joints_state,
@@ -1872,7 +1872,7 @@ class RigidSolver(KinematicSolver):
             )
             # Single-call manual FK Jacobian-transpose (see post-coupling
             # site for explanation). Iterates leaf→root inside one launch.
-            kernel_manual_uc_bw(
+            kernel_manual_fk_only_bw(
                 links_state=self.links_state,
                 links_info=self.links_info,
                 joints_state=self.joints_state,

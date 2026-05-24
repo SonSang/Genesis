@@ -550,7 +550,7 @@ def kernel_manual_uc_bw_one_link(
 
 
 @qd.kernel(fastcache=True)
-def kernel_manual_uc_bw(
+def kernel_manual_fk_only_bw(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     joints_state: array_class.JointsState,
@@ -571,7 +571,7 @@ def kernel_manual_uc_bw(
     SPHERICAL flips an errno bit (caller must check + raise).
     """
     qd.loop_config(
-        name="manual_uc_bw",
+        name="manual_fk_only_bw",
         serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
     )
     for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
