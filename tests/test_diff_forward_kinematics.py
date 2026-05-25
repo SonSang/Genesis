@@ -77,6 +77,11 @@ _N_ENVS_PARAMS = [
     pytest.param(4, id="batched"),
 ]
 
+_SUBSTEPS_PARAMS = [
+    pytest.param(1, id="ss1"),
+    pytest.param(4, id="ss4"),
+]
+
 
 # ---------------------------------------------------------------------------
 # MJCF topologies. All geoms set contype/conaffinity=0 so collision is never
@@ -183,10 +188,11 @@ def _mjcf_to_tmpfile(mjcf_str: str) -> str:
     return path
 
 
-def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0):
+def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0, substeps: int = 1):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
+            substeps=substeps,
             gravity=(0.0, 0.0, 0.0),
             requires_grad=requires_grad,
         ),
@@ -205,7 +211,7 @@ def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0):
     return scene, robot
 
 
-def _make_scene_pair(mjcf_str: str, n_envs: int = 0):
+def _make_scene_pair(mjcf_str: str, n_envs: int = 0, substeps: int = 1):
     """Build two parallel scenes from the same MJCF:
 
       * `scene_ana` runs the differentiable-mode forward and is the only one we
@@ -223,8 +229,8 @@ def _make_scene_pair(mjcf_str: str, n_envs: int = 0):
     so we can verify that per-env adjoints are independently correct.
     """
     path = _mjcf_to_tmpfile(mjcf_str)
-    scene_ana, robot_ana = _build_scene(path, requires_grad=True, n_envs=n_envs)
-    scene_fd, robot_fd = _build_scene(path, requires_grad=False, n_envs=n_envs)
+    scene_ana, robot_ana = _build_scene(path, requires_grad=True, n_envs=n_envs, substeps=substeps)
+    scene_fd, robot_fd = _build_scene(path, requires_grad=False, n_envs=n_envs, substeps=substeps)
     return scene_ana, robot_ana, scene_fd, robot_fd, path
 
 
@@ -447,9 +453,10 @@ def _target(shape, seed):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-def test_diff_fk_freejoint(show_viewer, n_envs, precision):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
     """J1: single free body. Covers (n_envs ∈ {0, 4}) × (precision ∈ {fp64, fp32})."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE, n_envs=n_envs)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs
     B = _batch_size(scene_ana)
     tol_default = _TOL[(precision, "default")]
@@ -539,9 +546,10 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-def test_diff_fk_revolute(show_viewer, n_envs, precision):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_revolute(show_viewer, n_envs, precision, substeps):
     """J2: single revolute joint, fixed base. Covers (n_envs ∈ {0, 4}) × (precision ∈ {fp64, fp32})."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REVOLUTE, n_envs=n_envs)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REVOLUTE, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 1
     B = _batch_size(scene_ana)
     tol_default = _TOL[(precision, "default")]
@@ -591,12 +599,13 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-def test_diff_fk_spherical(show_viewer, n_envs, precision):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_spherical(show_viewer, n_envs, precision, substeps):
     """J6: single spherical (ball) joint, fixed base. 3 angular DOFs / 4 qpos
     (quaternion). Exercises the SPHERICAL branch of
     `kernel_manual_fk_only_bw` — verifies that the `qloc → qpos[0:4]`
     chain rule matches FD."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_SPHERICAL, n_envs=n_envs)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_SPHERICAL, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 3
     B = _batch_size(scene_ana)
     tol_default = _TOL[(precision, "default")]
@@ -646,9 +655,10 @@ def test_diff_fk_spherical(show_viewer, n_envs, precision):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-def test_diff_fk_prismatic(show_viewer, n_envs, precision):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_prismatic(show_viewer, n_envs, precision, substeps):
     """J3: single prismatic joint, fixed base. No rotational DOF — skip the quat output."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_PRISMATIC, n_envs=n_envs)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_PRISMATIC, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 1
     B = _batch_size(scene_ana)
     tol_default = _TOL[(precision, "default")]
@@ -686,10 +696,11 @@ def test_diff_fk_prismatic(show_viewer, n_envs, precision):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
     """J4: freejoint root + one revolute child — the #2537 topology. Outputs use
     multi-link solver_state.links_pos/quat so the child link's FK is exercised too."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE_REV, n_envs=n_envs)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_FREE_REV, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # 6 free + 1 hinge = 7
     n_links = robot_ana.n_links  # 2
     B = _batch_size(scene_ana)
@@ -769,9 +780,10 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision, substeps):
     """J5: 3-link serial revolute chain, fixed base. Tests deeper FK chain."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REV_CHAIN3, n_envs=n_envs)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_REV_CHAIN3, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # 3
     n_links = robot_ana.n_links  # 3
     B = _batch_size(scene_ana)
@@ -838,7 +850,10 @@ _MULTISTEP_TOPOLOGIES = [
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("mjcf_str, name, n_dofs, loss_factory, output_shape, seed", _MULTISTEP_TOPOLOGIES)
-def test_diff_fk_multistep_control_force(show_viewer, mjcf_str, name, n_dofs, loss_factory, output_shape, seed):
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_multistep_control_force(
+    show_viewer, mjcf_str, name, n_dofs, loss_factory, output_shape, seed, substeps
+):
     """Per-topology check that `control_dofs_force` applied with a *different*
     input at each of N=10 steps produces per-step gradients that match FD.
 
@@ -854,7 +869,7 @@ def test_diff_fk_multistep_control_force(show_viewer, mjcf_str, name, n_dofs, lo
     obscure real bugs. Single-step tests already cover fp32 + batched
     against the same setter.
     """
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(mjcf_str, n_envs=0)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(mjcf_str, n_envs=0, substeps=substeps)
     B = _batch_size(scene_ana)
     target = _target((B, *output_shape), seed=seed)
 
