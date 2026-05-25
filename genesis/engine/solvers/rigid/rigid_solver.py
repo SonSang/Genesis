@@ -117,17 +117,6 @@ from .abd.forward_dynamics import (
     kernel_compute_qacc,
     kernel_forward_dynamics_without_qacc,
     kernel_manual_compute_qacc_bw,
-    kernel_split_compute_mass_matrix,
-    kernel_split_torque_and_passive_force,
-    kernel_split_update_acc,
-    kernel_split_update_force,
-    kernel_split_bias_force,
-    kernel_mm_crb_initialize,
-    kernel_mm_crb_aggregate,
-    kernel_mm_compute_f,
-    kernel_mm_assemble,
-    kernel_mm_armature,
-    kernel_mm_implicit_damping_corr,
     update_qacc_from_qvel_delta,
     update_qvel,
 )
@@ -191,9 +180,6 @@ from .abd.manual_bw import (
     kernel_manual_func_integrate_bw,
     kernel_manual_uc_bw_one_link,
     kernel_manual_fk_only_bw,
-    kernel_manual_update_force_bw,
-    kernel_manual_mm_assemble_bw,
-    kernel_manual_mm_crb_aggregate_bw,
     kernel_manual_forward_velocity_bw,
 )
 
@@ -1649,101 +1635,24 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-        # Step 5 split: replace monolithic `kernel_forward_dynamics_without_qacc.grad`
-        # with per-sub-func reverse calls in REVERSE forward order. Hypothesis (see
-        # notes/diffrigid_handoff_j4_n2_fwd_velocity_suspect.md): the single-kernel
-        # version silently drops cross-sub-func .grad chain (cinr_pos.grad in
-        # particular) when multiple sub-funcs write to the same buffer within one
-        # kernel. Per-kernel boundary isolates each reverse.
-        kernel_split_bias_force.grad(
-            dofs_state=self.dofs_state,
+        # TEMP EXPERIMENT: replace the split block (per-sub-func + manual reverses)
+        # with the original monolithic `kernel_forward_dynamics_without_qacc.grad`
+        # to test whether the primal-consistency fix (commit 423932f7) removes the
+        # need for the split that was introduced to work around cross-sub-func
+        # silent drop. If test parity holds, the split is redundant complexity.
+        kernel_forward_dynamics_without_qacc.grad(
             links_state=self.links_state,
             links_info=self.links_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
-        )
-        # Step 5 sub-3: manual reverse for update_force (suspected silent drop
-        # of cinr_pos.grad chain via inertial_mul + motion_cross_force inside
-        # the monolithic fwd_dyn.grad). The split alone did not change J4 N=2
-        # rel err — replacing the auto-AD reverse with explicit chain rule
-        # tests whether the wrong chain is in this sub-func specifically.
-        kernel_manual_update_force_bw(
-            links_state=self.links_state,
-            links_info=self.links_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            errno=self._errno,
-        )
-        kernel_split_update_acc.grad(
-            dofs_state=self.dofs_state,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
-        )
-        kernel_split_torque_and_passive_force.grad(
-            entities_state=self.entities_state,
-            entities_info=self.entities_info,
             dofs_state=self.dofs_state,
             dofs_info=self.dofs_info,
-            links_state=self.links_state,
-            links_info=self.links_info,
             joints_info=self.joints_info,
+            entities_state=self.entities_state,
+            entities_info=self.entities_info,
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=True,
-        )
-        self._debug_grad_dump(f"f={f} after torque_and_passive_force.grad")
-        # Step 5 sub-4: split compute_mass_matrix.grad into per-sub-block reverse
-        # to localize the 50%-rel-err contribution observed when its monolithic
-        # .grad was skipped. Reverse order: impint_corr → armature → assemble →
-        # compute_f → crb_aggregate → crb_initialize.
-        if self._integrator == gs.integrator.approximate_implicitfast:
-            kernel_mm_implicit_damping_corr.grad(
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-        kernel_mm_armature.grad(
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
-        )
-        kernel_manual_mm_assemble_bw(
-            dofs_state=self.dofs_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            errno=self._errno,
-        )
-        kernel_mm_compute_f.grad(
-            links_state=self.links_state,
-            links_info=self.links_info,
-            dofs_state=self.dofs_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-        kernel_manual_mm_crb_aggregate_bw(
-            links_state=self.links_state,
-            links_info=self.links_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            errno=self._errno,
-        )
-        kernel_mm_crb_initialize.grad(
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self._debug_grad_dump(f"f={f} after fwd_dynamics_without_qacc.grad")
 
