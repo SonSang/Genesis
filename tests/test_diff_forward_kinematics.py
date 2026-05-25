@@ -757,28 +757,12 @@ def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision):
 # ---------------------------------------------------------------------------
 
 
-# Known issue: J4/J5 multi-step `control_dofs_force` over-counts the gradient
-# because `cdof_*` / `cinr_*` / `cd_*` / `cfrc_*` `.grad` fields leak between
-# backward substeps. The leak is the *visible* symptom of a deeper silent-AD
-# bug: chain rule for these fields silently drops contributions that should
-# flow into `qpos.grad` (Phase B family). On single-step tests the lost
-# contributions stay inside atol; multi-step backward stacks the lost grads
-# `N` times, breaking the FD comparison. Naively zeroing the leak fields
-# closes the cross-substep leak but ALSO discards the silently-lost-but-
-# legitimate chain, regressing J1's free-body rotation DOFs.
-_J4J5_KNOWN_FAIL = pytest.mark.xfail(
-    strict=True,
-    reason="multi-step cdof_*/cinr_*/cd_*/cfrc_* silent-AD chain loss — see notes/",
-)
-
 _MULTISTEP_TOPOLOGIES = [
     pytest.param(MJCF_FREE, "J1 freejoint", 6, _loss_state_pos, (3,), 161, id="J1_free"),
     pytest.param(MJCF_REVOLUTE, "J2 revolute", 1, _loss_state_pos, (3,), 162, id="J2_revolute"),
     pytest.param(MJCF_PRISMATIC, "J3 prismatic", 1, _loss_state_pos, (3,), 163, id="J3_prismatic"),
-    pytest.param(
-        MJCF_FREE_REV, "J4 free+revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev", marks=_J4J5_KNOWN_FAIL
-    ),
-    pytest.param(MJCF_REV_CHAIN3, "J5 chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3", marks=_J4J5_KNOWN_FAIL),
+    pytest.param(MJCF_FREE_REV, "J4 free+revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev"),
+    pytest.param(MJCF_REV_CHAIN3, "J5 chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3"),
 ]
 
 
