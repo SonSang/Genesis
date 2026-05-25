@@ -1,1 +1,2 @@
+rm -rf ~/.cache/quadrants/qdcache
 CUDA_VISIBLE_DEVICES="" python -m pytest tests/test_diff_forward_kinematics.py -v -x -n 0
