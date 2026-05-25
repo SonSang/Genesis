@@ -19,7 +19,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .forward_kinematics import func_update_cartesian_space
+from .forward_kinematics import func_update_cartesian_space, func_forward_velocity
 
 
 @qd.func
@@ -179,6 +179,16 @@ def kernel_prepare_backward_substep(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             force_update_fixed_geoms=False,
+            is_backward=True,
+        )
+        func_forward_velocity(
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
             is_backward=True,
         )
 
