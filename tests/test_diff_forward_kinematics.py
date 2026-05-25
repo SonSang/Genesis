@@ -136,6 +136,18 @@ MJCF_FREE_REV = """
 </mujoco>
 """
 
+MJCF_SPHERICAL = """
+<mujoco model="spherical">
+  <worldbody>
+    <body name="ball" pos="0 0 0">
+      <joint type="ball"/>
+      <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
+      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
 MJCF_REV_CHAIN3 = """
 <mujoco model="chain3">
   <worldbody>
@@ -579,6 +591,61 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+def test_diff_fk_spherical(show_viewer, n_envs, precision):
+    """J6: single spherical (ball) joint, fixed base. 3 angular DOFs / 4 qpos
+    (quaternion). Exercises the SPHERICAL branch of
+    `kernel_manual_fk_only_bw` — verifies that the `qloc → qpos[0:4]`
+    chain rule matches FD."""
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_SPHERICAL, n_envs=n_envs)
+    n_dofs = robot_ana.n_dofs  # = 3
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
+    tol_quat = _TOL[(precision, "quat")]
+
+    tgt_pos = _target((B, 3), seed=61)
+    tgt_quat = _target((B, 4), seed=62)
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=70),
+        apply_fn=lambda r, x: r.set_dofs_velocity(x),
+        loss_fn=_loss_state_pos(tgt_pos),
+        label="J6 set_dofs_velocity → state.pos",
+        **tol_default,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=71),
+        apply_fn=lambda r, x: r.set_dofs_velocity(x),
+        loss_fn=_loss_state_quat(tgt_quat),
+        label="J6 set_dofs_velocity → state.quat",
+        **tol_quat,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=72),
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=_loss_state_quat(tgt_quat),
+        label="J6 control_dofs_force → state.quat",
+        **tol_quat,
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 def test_diff_fk_prismatic(show_viewer, n_envs, precision):
     """J3: single prismatic joint, fixed base. No rotational DOF — skip the quat output."""
     scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_PRISMATIC, n_envs=n_envs)
@@ -763,6 +830,7 @@ _MULTISTEP_TOPOLOGIES = [
     pytest.param(MJCF_PRISMATIC, "J3 prismatic", 1, _loss_state_pos, (3,), 163, id="J3_prismatic"),
     pytest.param(MJCF_FREE_REV, "J4 free+revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev"),
     pytest.param(MJCF_REV_CHAIN3, "J5 chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3"),
+    pytest.param(MJCF_SPHERICAL, "J6 spherical", 3, _loss_state_pos, (3,), 166, id="J6_spherical"),
 ]
 
 

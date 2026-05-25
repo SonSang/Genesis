@@ -534,23 +534,6 @@ class RigidSolver(KinematicSolver):
             self.links_state_adjoint_cache = self.data_manager.links_state_adjoint_cache
             self.joints_state_adjoint_cache = self.data_manager.joints_state_adjoint_cache
             self.geoms_state_adjoint_cache = self.data_manager.geoms_state_adjoint_cache
-            # Pre-check: kernel_manual_uc_bw_one_link (the manual replacement
-            # for `kernel_update_cartesian_space_one_link.grad`) has no
-            # SPHERICAL backward yet. Raise early at build time so users
-            # don't only discover this on the first `.backward()` call.
-            # Guarded by `_requires_grad` because forward simulation is
-            # unaffected.
-            if self._n_joints > 0:
-                # `self.joints_info` is not bound yet inside `_create_data_manager`;
-                # read from `data_manager` directly.
-                joints_type_np = qd_to_numpy(self.data_manager.joints_info.type)
-                if (joints_type_np == int(gs.JOINT_TYPE.SPHERICAL)).any():
-                    gs.raise_exception(
-                        "Differentiable rigid simulation does not yet support SPHERICAL joints: "
-                        "`kernel_manual_uc_bw_one_link` has no backward branch for them. "
-                        "Either rewrite the joint as a chain of REVOLUTE joints or extend the kernel "
-                        "(see guide P9 in `notes/diffrigid_debugging_guide.md`)."
-                    )
 
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
@@ -1079,10 +1062,10 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
         if errno & array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE:
             gs.raise_exception(
-                "Encountered a joint type (SPHERICAL) for which `kernel_manual_uc_bw_one_link` has no backward "
-                "implementation. Extend the kernel per guide P9 before running differentiable simulation on this "
-                "topology — see `genesis/engine/solvers/rigid/abd/manual_bw.py` and "
-                "`notes/diffrigid_debugging_guide.md`."
+                "Encountered a joint type for which a manual backward kernel has no implementation. "
+                "Extend the corresponding `kernel_manual_*_bw` in "
+                "`genesis/engine/solvers/rigid/abd/manual_bw.py` (see guide P9 in "
+                "`notes/diffrigid_debugging_guide.md`)."
             )
 
     def _kernel_detect_collision(self):

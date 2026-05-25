@@ -567,8 +567,7 @@ def kernel_manual_fk_only_bw(
     child's `parent.{pos,quat}.grad` write completes before the parent's
     own iteration consumes it.
 
-    Joint types supported: FREE / REVOLUTE / PRISMATIC / FIXED.
-    SPHERICAL flips an errno bit (caller must check + raise).
+    Joint types supported: FREE / REVOLUTE / PRISMATIC / FIXED / SPHERICAL.
     """
     qd.loop_config(
         name="manual_fk_only_bw",
@@ -731,7 +730,77 @@ def kernel_manual_fk_only_bw(
                     links_state.quat.grad[i_l, i_b][j] = 0.0
 
             elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                errno[i_b] = errno[i_b] | array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE
+                # Forward (forward_kinematics.py SPHERICAL branch):
+                #   qloc      = qpos[q_start:q_start+4]   (4 quaternion values, direct)
+                #   arm_quat  = quat_mul(parent_quat, qloc)   if parent != -1
+                #              = quat_mul(links_info.quat[I_l], qloc)  otherwise
+                #   arm_pos   = parent_pos + R(parent_quat) · arm_local   (joints_info.pos=0 assumption)
+                # axis is the default [0, 0, 1] (SPHERICAL doesn't read motion_ang/vel).
+                # Same chain as REVOLUTE with qloc derivative trivial (∂qloc/∂qpos = identity).
+                axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+                qloc = qd.Vector(
+                    [
+                        rigid_global_info.qpos[q_start, i_b],
+                        rigid_global_info.qpos[q_start + 1, i_b],
+                        rigid_global_info.qpos[q_start + 2, i_b],
+                        rigid_global_info.qpos[q_start + 3, i_b],
+                    ],
+                    dt=gs.qd_float,
+                )
+                parent_idx = links_info.parent_idx[I_l]
+                arm_pos_grad = links_state.pos.grad[i_l, i_b]
+                arm_quat_grad = links_state.quat.grad[i_l, i_b]
+
+                if parent_idx != -1:
+                    parent_quat = links_state.quat[parent_idx, i_b]
+                    arm_local = links_info.pos[I_l]
+                    parent_quat_grad_from_pos = d_transform_by_quat__dq(arm_local, parent_quat, arm_pos_grad)
+                    parent_quat_grad_from_quat = d_quat_mul__dlhs(parent_quat, qloc, arm_quat_grad)
+                    qloc_grad = d_quat_mul__drhs(parent_quat, qloc, arm_quat_grad)
+
+                    xanchor_grad = joints_state.xanchor.grad[i_j, i_b]
+                    xaxis_grad = joints_state.xaxis.grad[i_j, i_b]
+                    joint_pos_off = joints_info.pos[I_j]
+                    parent_quat_grad_from_xanchor_via_quat = d_transform_by_quat__dq(
+                        joint_pos_off, parent_quat, xanchor_grad
+                    )
+                    parent_quat_grad_from_xaxis = d_transform_by_quat__dq(axis, parent_quat, xaxis_grad)
+                    parent_quat_grad_from_xanchor_via_pos = d_transform_by_quat__dq(
+                        arm_local, parent_quat, xanchor_grad
+                    )
+
+                    for j in qd.static(range(4)):
+                        rigid_global_info.qpos.grad[q_start + j, i_b] = (
+                            rigid_global_info.qpos.grad[q_start + j, i_b] + qloc_grad[j]
+                        )
+                    for j in qd.static(range(3)):
+                        links_state.pos.grad[parent_idx, i_b][j] = (
+                            links_state.pos.grad[parent_idx, i_b][j] + arm_pos_grad[j] + xanchor_grad[j]
+                        )
+                    for j in qd.static(range(4)):
+                        links_state.quat.grad[parent_idx, i_b][j] = (
+                            links_state.quat.grad[parent_idx, i_b][j]
+                            + parent_quat_grad_from_pos[j]
+                            + parent_quat_grad_from_quat[j]
+                            + parent_quat_grad_from_xanchor_via_quat[j]
+                            + parent_quat_grad_from_xaxis[j]
+                            + parent_quat_grad_from_xanchor_via_pos[j]
+                        )
+                    for j in qd.static(range(3)):
+                        joints_state.xanchor.grad[i_j, i_b][j] = 0.0
+                        joints_state.xaxis.grad[i_j, i_b][j] = 0.0
+                else:
+                    quat_init = links_info.quat[I_l]
+                    qloc_grad = d_quat_mul__drhs(quat_init, qloc, arm_quat_grad)
+                    for j in qd.static(range(4)):
+                        rigid_global_info.qpos.grad[q_start + j, i_b] = (
+                            rigid_global_info.qpos.grad[q_start + j, i_b] + qloc_grad[j]
+                        )
+
+                for j in qd.static(range(3)):
+                    links_state.pos.grad[i_l, i_b][j] = 0.0
+                for j in qd.static(range(4)):
+                    links_state.quat.grad[i_l, i_b][j] = 0.0
 
             elif joint_type == gs.JOINT_TYPE.FIXED:
                 parent_idx = links_info.parent_idx[I_l]
@@ -1883,7 +1952,138 @@ def kernel_manual_func_integrate_bw(
                 pass
 
             elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                qd.atomic_or(errno[i_b], array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE)
+                # Same scalar rotation reverse as the FREE branch but with the
+                # 4 quaternion qpos slots at q_start..q_start+3 (rot_offset=0)
+                # and the 3 angular vel slots at dof_start..dof_start+2.
+                rot0_w = rigid_adjoint_cache.qpos[f, q_start + 0, i_b]
+                rot0_x = rigid_adjoint_cache.qpos[f, q_start + 1, i_b]
+                rot0_y = rigid_adjoint_cache.qpos[f, q_start + 2, i_b]
+                rot0_z = rigid_adjoint_cache.qpos[f, q_start + 3, i_b]
+
+                ang_x = dofs_state.vel_next[dof_start + 0, i_b] * dt
+                ang_y = dofs_state.vel_next[dof_start + 1, i_b] * dt
+                ang_z = dofs_state.vel_next[dof_start + 2, i_b] * dt
+
+                thetasq = ang_x * ang_x + ang_y * ang_y + ang_z * ang_z
+                theta_reg = qd.sqrt(thetasq + EPS * EPS)
+                theta_half = 0.5 * theta_reg
+                sin_h = qd.sin(theta_half)
+                cos_h = qd.cos(theta_half)
+                sinc = sin_h / theta_reg
+                qrot_w = cos_h
+                qrot_x = sinc * ang_x
+                qrot_y = sinc * ang_y
+                qrot_z = sinc * ang_z
+
+                rot_grad_w = rigid_global_info.qpos_next.grad[q_start + 0, i_b]
+                rot_grad_x = rigid_global_info.qpos_next.grad[q_start + 1, i_b]
+                rot_grad_y = rigid_global_info.qpos_next.grad[q_start + 2, i_b]
+                rot_grad_z = rigid_global_info.qpos_next.grad[q_start + 3, i_b]
+
+                a0_w = rot_grad_w * qrot_w
+                a1_w = rot_grad_x * qrot_x
+                a2_w = rot_grad_y * qrot_y
+                a3_w = rot_grad_z * qrot_z
+                s01_w = a0_w + a1_w
+                s012_w = s01_w + a2_w
+                rot0_w_grad = s012_w + a3_w
+
+                a0_x = -rot_grad_w * qrot_x
+                a1_x = rot_grad_x * qrot_w
+                a2_x = -rot_grad_y * qrot_z
+                a3_x = rot_grad_z * qrot_y
+                s01_x = a0_x + a1_x
+                s012_x = s01_x + a2_x
+                rot0_x_grad = s012_x + a3_x
+
+                a0_y = -rot_grad_w * qrot_y
+                a1_y = rot_grad_x * qrot_z
+                a2_y = rot_grad_y * qrot_w
+                a3_y = -rot_grad_z * qrot_x
+                s01_y = a0_y + a1_y
+                s012_y = s01_y + a2_y
+                rot0_y_grad = s012_y + a3_y
+
+                a0_z = -rot_grad_w * qrot_z
+                a1_z = -rot_grad_x * qrot_y
+                a2_z = rot_grad_y * qrot_x
+                a3_z = rot_grad_z * qrot_w
+                s01_z = a0_z + a1_z
+                s012_z = s01_z + a2_z
+                rot0_z_grad = s012_z + a3_z
+
+                b0_w = rot_grad_w * rot0_w
+                b1_w = rot_grad_x * rot0_x
+                b2_w = rot_grad_y * rot0_y
+                b3_w = rot_grad_z * rot0_z
+                bs01_w = b0_w + b1_w
+                bs012_w = bs01_w + b2_w
+                qrot_w_grad = bs012_w + b3_w
+
+                b0_x = -rot_grad_w * rot0_x
+                b1_x = rot_grad_x * rot0_w
+                b2_x = rot_grad_y * rot0_z
+                b3_x = -rot_grad_z * rot0_y
+                bs01_x = b0_x + b1_x
+                bs012_x = bs01_x + b2_x
+                qrot_x_grad = bs012_x + b3_x
+
+                b0_y = -rot_grad_w * rot0_y
+                b1_y = -rot_grad_x * rot0_z
+                b2_y = rot_grad_y * rot0_w
+                b3_y = rot_grad_z * rot0_x
+                bs01_y = b0_y + b1_y
+                bs012_y = bs01_y + b2_y
+                qrot_y_grad = bs012_y + b3_y
+
+                b0_z = -rot_grad_w * rot0_z
+                b1_z = rot_grad_x * rot0_y
+                b2_z = -rot_grad_y * rot0_x
+                b3_z = rot_grad_z * rot0_w
+                bs01_z = b0_z + b1_z
+                bs012_z = bs01_z + b2_z
+                qrot_z_grad = bs012_z + b3_z
+
+                dsinc_dtheta = 0.5 * cos_h - sinc
+                dsinc_dtheta = dsinc_dtheta / theta_reg
+
+                qg_dot_r = qrot_x_grad * ang_x
+                qg_dot_r = qg_dot_r + qrot_y_grad * ang_y
+                qg_dot_r = qg_dot_r + qrot_z_grad * ang_z
+
+                neg_half_sin_h = -0.5 * sin_h
+                coeff_a = neg_half_sin_h / theta_reg
+                coeff_a = coeff_a * qrot_w_grad
+                coeff_b = dsinc_dtheta / theta_reg
+                coeff_b = coeff_b * qg_dot_r
+                coeff = coeff_a + coeff_b
+
+                ang_grad_x = coeff * ang_x + sinc * qrot_x_grad
+                ang_grad_y = coeff * ang_y + sinc * qrot_y_grad
+                ang_grad_z = coeff * ang_z + sinc * qrot_z_grad
+
+                rigid_global_info.qpos.grad[q_start + 0, i_b] = (
+                    rigid_global_info.qpos.grad[q_start + 0, i_b] + rot0_w_grad
+                )
+                rigid_global_info.qpos.grad[q_start + 1, i_b] = (
+                    rigid_global_info.qpos.grad[q_start + 1, i_b] + rot0_x_grad
+                )
+                rigid_global_info.qpos.grad[q_start + 2, i_b] = (
+                    rigid_global_info.qpos.grad[q_start + 2, i_b] + rot0_y_grad
+                )
+                rigid_global_info.qpos.grad[q_start + 3, i_b] = (
+                    rigid_global_info.qpos.grad[q_start + 3, i_b] + rot0_z_grad
+                )
+
+                dofs_state.vel_next.grad[dof_start + 0, i_b] = (
+                    dofs_state.vel_next.grad[dof_start + 0, i_b] + dt * ang_grad_x
+                )
+                dofs_state.vel_next.grad[dof_start + 1, i_b] = (
+                    dofs_state.vel_next.grad[dof_start + 1, i_b] + dt * ang_grad_y
+                )
+                dofs_state.vel_next.grad[dof_start + 2, i_b] = (
+                    dofs_state.vel_next.grad[dof_start + 2, i_b] + dt * ang_grad_z
+                )
 
             else:
                 # REVOLUTE / PRISMATIC: qpos_next[q_start+i] = qpos[q_start+i] + vel_next[dof_start+i] * dt
