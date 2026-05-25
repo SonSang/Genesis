@@ -30,6 +30,7 @@ control_dofs_force comment for details).
 
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -152,6 +153,8 @@ MJCF_SPHERICAL = """
   </worldbody>
 </mujoco>
 """
+
+MJCF_CARTPOLE = (Path(__file__).resolve().parent.parent / "examples" / "diffrl" / "envs" / "cartpole.xml").read_text()
 
 MJCF_REV_CHAIN3 = """
 <mujoco model="chain3">
@@ -697,6 +700,63 @@ def test_diff_fk_prismatic(show_viewer, n_envs, precision, substeps):
 @pytest.mark.parametrize("precision", _PRECISION_PARAMS)
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
 @pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+def test_diff_fk_cartpole(show_viewer, n_envs, precision, substeps):
+    """J7: cartpole (prismatic cart + revolute pole). 2 links / 2 DOFs.
+    Same chain as J4 (multi-link entity with translation + rotation
+    coupling) but built from the production diffrl example MJCF so the
+    test mirrors what the SHAC swing-up env actually runs through
+    backward."""
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(MJCF_CARTPOLE, n_envs=n_envs, substeps=substeps)
+    n_dofs = robot_ana.n_dofs  # = 2 (slider + hinge)
+    B = _batch_size(scene_ana)
+    tol_default = _TOL[(precision, "default")]
+    tol_quat = _TOL[(precision, "quat")]
+
+    tgt_links_pos = _target((B, 2, 3), seed=181)
+    tgt_links_quat = _target((B, 2, 4), seed=182)
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=190),
+        apply_fn=lambda r, x: r.set_dofs_velocity(x),
+        loss_fn=_loss_links_pos(tgt_links_pos),
+        label="J7 set_dofs_velocity → links_pos",
+        **tol_default,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=191),
+        apply_fn=lambda r, x: r.set_dofs_velocity(x),
+        loss_fn=_loss_links_quat(tgt_links_quat),
+        label="J7 set_dofs_velocity → links_quat",
+        **tol_quat,
+    )
+
+    _grad_matches_fd(
+        scene_ana,
+        robot_ana,
+        scene_fd,
+        robot_fd,
+        init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=192),
+        apply_fn=lambda r, x: r.control_dofs_force(x),
+        loss_fn=_loss_links_pos(tgt_links_pos),
+        label="J7 control_dofs_force → links_pos",
+        **tol_default,
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
+@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
+@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
 def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
     """J4: freejoint root + one revolute child — the #2537 topology. Outputs use
     multi-link solver_state.links_pos/quat so the child link's FK is exercised too."""
@@ -843,6 +903,7 @@ _MULTISTEP_TOPOLOGIES = [
     pytest.param(MJCF_FREE_REV, "J4 free+revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev"),
     pytest.param(MJCF_REV_CHAIN3, "J5 chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3"),
     pytest.param(MJCF_SPHERICAL, "J6 spherical", 3, _loss_state_pos, (3,), 166, id="J6_spherical"),
+    pytest.param(MJCF_CARTPOLE, "J7 cartpole", 2, _loss_links_pos, (2, 3), 167, id="J7_cartpole"),
 ]
 
 
