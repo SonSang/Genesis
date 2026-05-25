@@ -242,17 +242,22 @@ def kernel_begin_backward_substep(
         )
 
         if not static_rigid_sim_config.enable_mujoco_compatibility:
-            # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
-            # Save results of [update_cartesian_space] to adjoint cache
+            # Restore pre-integrate cartesian-space outputs from the cache that
+            # `kernel_prepare_backward_substep` saved. The forward replays in
+            # `substep_pre_coupling_grad` have overwritten the live state slots
+            # with post-integrate primal (correct input for UCS/COM/vel reverse),
+            # but `step_2.grad` and the manual reverses downstream of it
+            # (`update_force_bw`, `mm_assemble_bw`, etc.) need the
+            # *pre-integrate* primal that `func_forward_dynamics` actually saw.
             func_copy_cartesian_space(
-                dofs_state=dofs_state,
-                links_state=links_state,
-                joints_state=joints_state,
-                geoms_state=geoms_state,
-                dofs_state_adjoint_cache=dofs_state_adjoint_cache,
-                links_state_adjoint_cache=links_state_adjoint_cache,
-                joints_state_adjoint_cache=joints_state_adjoint_cache,
-                geoms_state_adjoint_cache=geoms_state_adjoint_cache,
+                dofs_state=dofs_state_adjoint_cache,
+                links_state=links_state_adjoint_cache,
+                joints_state=joints_state_adjoint_cache,
+                geoms_state=geoms_state_adjoint_cache,
+                dofs_state_adjoint_cache=dofs_state,
+                links_state_adjoint_cache=links_state,
+                joints_state_adjoint_cache=joints_state,
+                geoms_state_adjoint_cache=geoms_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
@@ -364,23 +369,25 @@ def kernel_copy_next_to_curr_no_check(
     static_rigid_sim_config: qd.template(),
 ):
     # Unguarded copy of `_next` slots to current. Used in the backward substep right before
-    # `kernel_update_cartesian_space.grad` so the BW kernel sees the post-integrate qpos and
-    # builds the FK Jacobian around the actual rotation, not the pre-integrate identity quat
-    # that `func_load_adjoint_cache` left behind (this is what caused J4 chain attenuation
-    # on the freejoint angular DOFs).
-    #
-    # NOTE (vel copy removed): the comment above documents only the qpos copy intent. The
-    # vel copy was a side-effect that made `kernel_forward_velocity_one_link` (called right
-    # after this kernel) read post-integrate vel (state[t+1].vel) as its primal. But
-    # forward_velocity's correct primal at step t is the *pre-integrate* vel
-    # (state[t].vel — the integrator's INPUT, not OUTPUT). Keeping vel at pre-integrate
-    # fixes stage 14 vel.grad wrong on J4 N=2 (see notes/diffrigid_handoff_fwd_velocity_wrong_source.md).
+    # the forward replay so the BW kernels see the post-integrate qpos / vel:
+    #   - qpos: FK builds its Jacobian around the actual post-integrate rotation, not the
+    #     pre-integrate identity quat that `func_load_adjoint_cache` left behind (this was
+    #     what caused J4 chain attenuation on the freejoint angular DOFs).
+    #   - vel: COM_links reads `dofs_state.vel` to compute `cdofvel_*`, and forward_velocity
+    #     reads it to compute `cd_* / cdofd_*`. Real forward (`kernel_step_2` BW=False branch)
+    #     runs both with post-integrate vel (after `func_copy_next_to_curr`), so the backward
+    #     replay must mirror that to keep the forward primal consistent.
     n_qs = rigid_global_info.qpos.shape[0]
+    n_dofs = dofs_state.vel.shape[0]
     _B = dofs_state.vel.shape[1]
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_q, i_b in qd.ndrange(n_qs, _B):
         rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        dofs_state.vel[i_d, i_b] = dofs_state.vel_next[i_d, i_b]
 
 
 @qd.func

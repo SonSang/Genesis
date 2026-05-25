@@ -1492,74 +1492,16 @@ class RigidSolver(KinematicSolver):
         envs_idx = self._scene._sanitize_envs_idx(None)
         self._debug_grad_dump(f"f={f} entry")
         if not self._enable_mujoco_compatibility:
-            # Single-kernel forward replay + manual cross-link reverse. The
-            # previous per-link split worked around Quadrants AD's silent drop
-            # on `cd_{vel,ang}[parent_idx]`; `kernel_manual_forward_velocity_bw`
-            # writes that chain explicitly (FP64-floor verified across
-            # J1/J2/J3/J4/J5 vs FD).
-            kernel_forward_velocity(
-                envs_idx=envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=True,
-            )
-            kernel_manual_forward_velocity_bw(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                errno=self._errno,
-            )
-            self._debug_grad_dump(f"f={f} after post-fwd_velocity.grad")
-
-            # COM-links forward + .grad pair. Sits between forward_velocity.grad
-            # and update_cartesian_space.grad to mirror the forward order
-            # `forward_kinematics → COM_links → forward_velocity`. Drains the
-            # `cinr_*.grad` / `cdof_*.grad` populated by the Coriolis chain in
-            # `kernel_forward_dynamics_without_qacc.grad` (which runs later in
-            # this substep_pre_coupling_grad but writes the same fields the
-            # *next* substep's BW will read). The one_link split of
-            # update_cartesian_space below skips `func_COM_links_entity`
-            # entirely, so without this call cinr/cdof.grad never chain to
-            # qpos.grad and accumulate as multi-step over-counting on J4/J5.
-            kernel_COM_links(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=True,
-            )
-            kernel_COM_links.grad(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=True,
-            )
-            self._debug_grad_dump(f"f={f} after post-COM_links.grad")
-
-            # Single-call FK-only forward replay (BW=True) populates link
-            # `pos_bw / quat_bw` slots for the manual reverse below. COM /
-            # geom updates are intentionally skipped — handled by their own
-            # forward+reverse pairs above.
+            # Forward replay 3 kernels in dependency order (FK → COM → vel)
+            # so each kernel's input slots are already populated by the
+            # previous kernel. `self.substep(f)` runs with `is_backward=True`,
+            # which skips `func_update_cartesian_space` / `func_forward_velocity`
+            # at the end of `kernel_step_2` (guards on `not is_backward`) and
+            # also skips both calls at the top of `kernel_step_1` (guards on
+            # `is_forward_pos_updated` / `is_forward_vel_updated`, set True
+            # by the previous forward substep). So these three replays are
+            # the *only* source of post-integrate FK / COM / velocity primal
+            # for the manual reverses below.
             kernel_forward_kinematics_fk_only(
                 envs_idx=envs_idx,
                 links_state=self.links_state,
@@ -1573,6 +1515,63 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
             )
+            kernel_COM_links(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_forward_velocity(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+
+            # Reverse path in opposite order (vel.bw → COM.bw → FK.bw).
+            # `kernel_manual_forward_velocity_bw` writes the cross-link
+            # `cd_{vel,ang}[parent_idx]` chain explicitly (FP64-floor
+            # verified across J1/J2/J3/J4/J5 vs FD).
+            kernel_manual_forward_velocity_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
+            self._debug_grad_dump(f"f={f} after post-fwd_velocity.grad")
+            # `kernel_COM_links.grad` drains the `cinr_*.grad` / `cdof_*.grad`
+            # populated by the Coriolis chain in
+            # `kernel_forward_dynamics_without_qacc.grad` (which runs later
+            # in this substep_pre_coupling_grad but writes the same fields
+            # the *next* substep's BW will read).
+            kernel_COM_links.grad(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            self._debug_grad_dump(f"f={f} after post-COM_links.grad")
             # Single-call manual FK Jacobian-transpose replacing the auto-AD
             # UCS.grad (see `notes/diffrigid_handoff_ucs_translation_drop.md`
             # for the silent drop motivating this). Iterates leaf→root inside
@@ -1750,34 +1749,24 @@ class RigidSolver(KinematicSolver):
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
-            # Initial-substep mirror of the post-FK forward_velocity reverse:
-            # single-kernel forward replay (BW=True slot record) + manual
-            # cross-link reverse via `kernel_manual_forward_velocity_bw`.
-            kernel_forward_velocity(
+            # Forward replay 3 kernels in dependency order (FK → COM → vel)
+            # — mirror of the post-FK section above. See that site for the
+            # rationale (self.substep BW=True skips the post-integrate UCS /
+            # forward_velocity, so these three replays are the only source of
+            # post-integrate primal for the manual reverses below).
+            kernel_forward_kinematics_fk_only(
                 envs_idx=envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
+                joints_state=self.joints_state,
                 joints_info=self.joints_info,
                 dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
             )
-            kernel_manual_forward_velocity_bw(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                errno=self._errno,
-            )
-            # COM-links forward + .grad — same role as in post-FK section above.
-            # Drains the cinr/cdof.grad populated by `fwd_dynamics_without_qacc.grad`
-            # back into links_state.{pos,quat}.grad so the subsequent
-            # update_cartesian_space_one_link.grad can chain it into qpos.grad.
             kernel_COM_links(
                 links_state=self.links_state,
                 links_info=self.links_info,
@@ -1789,6 +1778,29 @@ class RigidSolver(KinematicSolver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
+            )
+            kernel_forward_velocity(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+
+            # Reverse path in opposite order (vel.bw → COM.bw → FK.bw).
+            kernel_manual_forward_velocity_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
             )
             kernel_COM_links.grad(
                 links_state=self.links_state,
@@ -1803,21 +1815,6 @@ class RigidSolver(KinematicSolver):
                 is_backward=True,
             )
             self._debug_grad_dump(f"f={f} after initial-COM_links.grad")
-            kernel_forward_kinematics_fk_only(
-                envs_idx=envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=True,
-            )
-            # Single-call manual FK Jacobian-transpose (see post-coupling
-            # site for explanation). Iterates leaf→root inside one launch.
             kernel_manual_fk_only_bw(
                 links_state=self.links_state,
                 links_info=self.links_info,
