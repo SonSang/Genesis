@@ -193,7 +193,7 @@ def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0, subste
         sim_options=gs.options.SimOptions(
             dt=0.01,
             substeps=substeps,
-            gravity=(0.0, 0.0, 0.0),
+            gravity=(0.0, 0.0, -9.81),
             requires_grad=requires_grad,
         ),
         rigid_options=gs.options.RigidOptions(
