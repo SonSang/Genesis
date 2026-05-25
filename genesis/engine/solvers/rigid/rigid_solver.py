@@ -177,7 +177,6 @@ from .abd.diff import (
     kernel_copy_next_to_curr_no_check,
 )
 from .abd.manual_bw import (
-    kernel_manual_func_integrate_bw,
     kernel_manual_uc_bw_one_link,
     kernel_manual_fk_only_bw,
     kernel_manual_forward_velocity_bw,
@@ -1582,22 +1581,29 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
         self._debug_grad_dump(f"f={f} after begin_backward_substep")
 
-        # Strategy A1 (extended): replace kernel_step_2.grad with manual reverse.
-        # See notes/diffrigid_handoff_n_ge_2_residual.md for the rationale —
-        # `func_integrate.grad` in production has a ~2e-09 silent drop on quat_mul
-        # reverse due to Quadrants AD's cross-kernel fields-level chain.
-        # `kernel_manual_func_integrate_bw` is FP64-floor verified (see
-        # notes/diag_manual_func_integrate_bw_verify.py).
-        kernel_manual_func_integrate_bw(
-            f=f,
-            dofs_state=self.dofs_state,
-            links_info=self.links_info,
-            joints_info=self.joints_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            rigid_adjoint_cache=self._rigid_adjoint_cache,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            errno=self._errno,
+        # Auto-AD reverse of `kernel_step_2` (integrator + acc update +
+        # implicit damping). The previously hand-written manual reverse
+        # (`kernel_manual_func_integrate_bw`) was a workaround for a
+        # ~2e-09 silent drop on quat_mul reverse, but the
+        # primal-consistency fix (commit 423932f7) and split cleanup
+        # (commit 9a36df6a) made `kernel_step_2.grad` byte-exact equivalent.
+        kernel_step_2.grad(
+            self.dofs_state,
+            self.dofs_info,
+            self.links_info,
+            self.links_state,
+            self.joints_info,
+            self.joints_state,
+            self.entities_state,
+            self.entities_info,
+            self.geoms_info,
+            self.geoms_state,
+            self.collider._collider_state,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
+            self.constraint_solver.contact_island.contact_island_state,
+            self._is_backward,
+            self._errno,
         )
         self._debug_grad_dump(f"f={f} after step_2.grad")
 
