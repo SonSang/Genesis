@@ -146,7 +146,6 @@ from .abd.accessor import (
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
     kernel_set_dofs_force_grad,
-    kernel_zero_acc_smooth_bw,
     kernel_set_dofs_zero_velocity,
     kernel_set_dofs_position,
     kernel_control_dofs_force,
@@ -177,7 +176,6 @@ from .abd.diff import (
     kernel_copy_next_to_curr_no_check,
 )
 from .abd.manual_bw import (
-    kernel_manual_uc_bw_one_link,
     kernel_manual_fk_only_bw,
     kernel_manual_forward_velocity_bw,
 )
@@ -1278,13 +1276,6 @@ class RigidSolver(KinematicSolver):
             qd_zero_grad(self.joints_state_adjoint_cache)
             qd_zero_grad(self.geoms_state_adjoint_cache)
             qd_zero_grad(self._rigid_adjoint_cache)
-            # Zero the LDLT-solve BW-cache field VALUES (not just `.grad`).
-            # `acc_smooth_bw` is read by `func_solve_mass_entity`'s Step 2 BW
-            # path during `substep_pre_coupling_grad`'s forward replay, and
-            # leftover values from a previous horizon's backward leak into the
-            # next horizon's adstack-driven `.grad`. See
-            # `kernel_zero_acc_smooth_bw` docstring for the full chain.
-            kernel_zero_acc_smooth_bw(self.dofs_state)
 
     def _debug_grad_dump(self, tag):
         # Temporary instrumentation gated by GENESIS_DEBUG_GRAD=1. Dumps abs-max / L2-norm of
@@ -1581,12 +1572,6 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
         self._debug_grad_dump(f"f={f} after begin_backward_substep")
 
-        # Auto-AD reverse of `kernel_step_2` (integrator + acc update +
-        # implicit damping). The previously hand-written manual reverse
-        # (`kernel_manual_func_integrate_bw`) was a workaround for a
-        # ~2e-09 silent drop on quat_mul reverse, but the
-        # primal-consistency fix (commit 423932f7) and split cleanup
-        # (commit 9a36df6a) made `kernel_step_2.grad` byte-exact equivalent.
         kernel_step_2.grad(
             self.dofs_state,
             self.dofs_info,

@@ -808,38 +808,6 @@ def kernel_set_dofs_force_grad(
 
 
 @qd.kernel(fastcache=True)
-def kernel_zero_acc_smooth_bw(
-    dofs_state: array_class.DofsState,
-):
-    """Zero `dofs_state.acc_smooth_bw` (both LDLT-solve slots) — the BW-mode
-    cache populated by `func_solve_mass_entity` Step 2 / by the per-DOF
-    `kernel_solve_mass_step1_one_dof_bw`.
-
-    Background: between two consecutive horizons in a SHAC-style training
-    loop, the user calls `loss.backward()` → `scene.reset(snapshot)` to
-    restore physics state. `SimState` doesn't carry `acc_smooth_bw`, so its
-    field values persist from the previous horizon's backward unchanged.
-    When the next horizon's `loss.backward()` triggers
-    `substep_pre_coupling_grad`, the `self.substep(f)` re-run executes
-    `func_solve_mass_entity` in BW mode — Step 2 reads `acc_smooth_bw[0]`
-    (still holding the old horizon's residue) and writes
-    `acc_smooth_bw[1] = D_inv * acc_smooth_bw[0]`. Even though the per-DOF
-    forward kernels later overwrite `acc_smooth_bw[0]` with fresh values
-    *before* `kernel_compute_qacc.grad`, Quadrants AD has already pushed
-    the wrong-primal Step 2 trace into the adstack during the substep(f)
-    re-run, and `.grad` consumes that. The result is a O(1e-7) drift on
-    multi-link entities like J4/J5.
-
-    Empirically verified: zeroing just the `acc_smooth_bw[0]` slot is enough
-    to drive A-vs-C grad equality to bit-exact. Slot 1 alone has no effect
-    because it gets fully overwritten by the substep(f) re-run before any
-    downstream read. Zeroing both is the safer / clearer fix.
-    """
-    for i, i_d, i_b in qd.ndrange(2, dofs_state.acc_smooth_bw.shape[1], dofs_state.acc_smooth_bw.shape[2]):
-        dofs_state.acc_smooth_bw[i, i_d, i_b] = 0.0
-
-
-@qd.kernel(fastcache=True)
 def kernel_set_dofs_position(
     position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
