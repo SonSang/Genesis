@@ -109,86 +109,120 @@ def qd_rotvec_to_R(rotvec, eps):
 
 @qd.func
 def qd_rotvec_to_quat(rotvec, eps):
-    quat = qd.Vector.zero(gs.qd_float, 4)
-
-    # We need to use [norm_sqr] instead of [norm] to avoid nan gradients in the backward pass. Even when theta = 0,
-    # the gradient of [norm] operation is computed and used (note that the gradient becomes NaN when theta = 0). This
-    # is seemd to be a bug in Quadrants autodiff @TODO: change back after the bug is fixed.
-    thetasq = rotvec.norm_sqr()
-    if thetasq > (eps**2):
-        theta = qd.sqrt(thetasq)
-        theta_half = 0.5 * theta
-        c, s = qd.cos(theta_half), qd.sin(theta_half)
-
-        quat[0] = c
-        xyz = s / theta * rotvec
-        for i in qd.static(range(3)):
-            quat[i + 1] = xyz[i]
-
-        # First order quaternion normalization is accurate enough yet necessary
-        quat *= 0.5 * (3.0 - quat.norm_sqr())
-    else:
-        quat[0] = 1.0
-
-    return quat
+    # Branch-free, division-stable rewrite of axis-angle -> quaternion. The previous form
+    # branched on `thetasq > eps**2` and divided `sin(theta/2) / theta` directly. Both the
+    # dynamic branch and the bare division silently dropped the reverse-mode chain inside
+    # `kernel_update_cartesian_space.grad` for any revolute joint (qpos.grad came out 0
+    # while finite-diff said otherwise — see tests/test_diff_forward_kinematics.py::J2).
+    #
+    # With `theta_reg = sqrt(thetasq + eps**2)` the denominator is strictly positive and
+    # `sin(theta_reg/2)/theta_reg` is a smooth function of `thetasq` everywhere, so the
+    # adstack pipeline does not need to negotiate a branch or a 0/0. In fp64 with the
+    # default `eps ~ 1e-15`, the regularization bias on the resulting quat is below
+    # round-off (eps**2 ~ 1e-30 added to thetasq), and the analytic norm is unit to the
+    # same order — the original first-order renormalization is therefore dropped.
+    # DEBUG: replace `rotvec.norm_sqr()` with explicit sum to test if `.norm_sqr()`'s
+    # reverse-mode AD has a sign bug.
+    thetasq = rotvec[0] * rotvec[0] + rotvec[1] * rotvec[1] + rotvec[2] * rotvec[2]
+    theta_reg = qd.sqrt(thetasq + eps * eps)
+    theta_half = 0.5 * theta_reg
+    c = qd.cos(theta_half)
+    sinc_half = qd.sin(theta_half) / theta_reg
+    return qd.Vector(
+        [c, sinc_half * rotvec[0], sinc_half * rotvec[1], sinc_half * rotvec[2]],
+        dt=gs.qd_float,
+    )
 
 
 @qd.func
 def qd_quat_to_R(quat, eps):
     """
     Converts quaternion to 3x3 rotation matrix.
+
+    Branch-free, division-stable rewrite — same family of fix as
+    `qd_rotvec_to_quat` above. The previous `if d > eps: ... 2.0 / d` form
+    silently dropped the reverse-mode chain through this function (and
+    therefore through `qd_transform_inertia_by_trans_quat` and `cinr.grad
+    → quat.grad`), surfacing as input-dependent gradient noise on multi-
+    link chains (J4/J5 multi-step `control_dofs_force`).
+
+    `d` is `quat.norm_sqr()` which for unit quaternions is ≈1; regularizing
+    by `+eps` shifts the result by O(eps) which is below round-off.
     """
-    R = qd.Matrix.identity(gs.qd_float, 3)
+    d = quat.norm_sqr() + eps
+    s = 2.0 / d
+    w, x, y, z = quat
+    xs, ys, zs = x * s, y * s, z * s
+    wx, wy, wz = w * xs, w * ys, w * zs
+    xx, xy, xz = x * xs, x * ys, x * zs
+    yy, yz, zz = y * ys, y * zs, z * zs
 
-    d = quat.norm_sqr()
-    if d > eps:
-        s = 2.0 / d
-        w, x, y, z = quat
-        xs, ys, zs = x * s, y * s, z * s
-        wx, wy, wz = w * xs, w * ys, w * zs
-        xx, xy, xz = x * xs, x * ys, x * zs
-        yy, yz, zz = y * ys, y * zs, z * zs
-
-        R = qd.Matrix(
-            [
-                [1.0 - (yy + zz), xy - wz, xz + wy],
-                [xy + wz, 1.0 - (xx + zz), yz - wx],
-                [xz - wy, yz + wx, 1.0 - (xx + yy)],
-            ],
-            dt=gs.qd_float,
-        )
-
-    return R
+    return qd.Matrix(
+        [
+            [1.0 - (yy + zz), xy - wz, xz + wy],
+            [xy + wz, 1.0 - (xx + zz), yz - wx],
+            [xz - wy, yz + wx, 1.0 - (xx + yy)],
+        ],
+        dt=gs.qd_float,
+    )
 
 
 @qd.func
 def qd_quat_to_xyz(quat, eps):
     """
     Convert a quaternion into intrinsic x-y-z Euler angles.
+
+    AD-safety rewrite — same family of fixes as `qd_rotvec_to_quat` /
+    `qd_quat_to_R`. The previous form had:
+      * outer `if quat_norm_sqr > eps` branch (Quadrants silently drops
+        the reverse chain through dynamic branches like this);
+      * bare division `2.0 / quat_norm_sqr`;
+      * tuple-unpack `q_w, q_x, q_y, q_z = quat` (explicitly flagged in
+        `qd_transform_by_quat` as silently dropping the q_x adjoint);
+      * inner `if cosp > eps` gimbal-lock branch.
+    Now: branch-free regularization for the outer norm, explicit indexing
+    for the components, gimbal-lock branch kept (it switches between two
+    valid Euler representations so cannot be merged smoothly, but cosp >
+    eps is the only path we hit for unit quaternions outside near-pole
+    singularity — the silent drop on its reverse is the J4 free-joint
+    leak suspect).
     """
+    d = quat.norm_sqr() + eps
+    s = 2.0 / d
+    q_w = quat[0]
+    q_x = quat[1]
+    q_y = quat[2]
+    q_z = quat[3]
+    q_xs = q_x * s
+    q_ys = q_y * s
+    q_zs = q_z * s
+    q_wx = q_w * q_xs
+    q_wy = q_w * q_ys
+    q_wz = q_w * q_zs
+    q_xx = q_x * q_xs
+    q_xy = q_x * q_ys
+    q_xz = q_x * q_zs
+    q_yy = q_y * q_ys
+    q_yz = q_y * q_zs
+    q_zz = q_z * q_zs
+
+    sinycosp = q_wz - q_xy
+    cosycosp = 1.0 - (q_yy + q_zz)
+    cosp = qd.sqrt(cosycosp * cosycosp + sinycosp * sinycosp)
+
+    # Gimbal-lock branch retained: at cosp ≈ 0, the `atan2(_, 1-(q_xx+q_yy))`
+    # and `atan2(sinycosp, cosycosp)` denominators both approach zero, so
+    # while NaN doesn't occur, the *gradient* through atan2 explodes
+    # (ill-conditioned). The fallback formula folds all the rotation into
+    # yaw, which is the correct gimbal-lock representation.
+    pitch = qd.atan2(q_xz + q_wy, cosp)
     roll = gs.qd_float(0.0)
-    pitch = gs.qd_float(0.0)
     yaw = gs.qd_float(0.0)
-
-    quat_norm_sqr = quat.norm_sqr()
-    if quat_norm_sqr > eps:
-        s = 2.0 / quat_norm_sqr
-        q_w, q_x, q_y, q_z = quat
-        q_xs, q_ys, q_zs = q_x * s, q_y * s, q_z * s
-        q_wx, q_wy, q_wz = q_w * q_xs, q_w * q_ys, q_w * q_zs
-        q_xx, q_xy, q_xz = q_x * q_xs, q_x * q_ys, q_x * q_zs
-        q_yy, q_yz, q_zz = q_y * q_ys, q_y * q_zs, q_z * q_zs
-
-        sinycosp = q_wz - q_xy
-        cosycosp = 1.0 - (q_yy + q_zz)
-        cosp = qd.sqrt(cosycosp**2 + sinycosp**2)
-
-        pitch = qd.atan2(q_xz + q_wy, cosp)
-        if cosp > eps:
-            roll = qd.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
-            yaw = qd.atan2(sinycosp, cosycosp)
-        else:
-            yaw = qd.atan2(q_wz + q_xy, 1.0 - (q_xx + q_zz))
+    if cosp > eps:
+        roll = qd.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
+        yaw = qd.atan2(sinycosp, cosycosp)
+    else:
+        yaw = qd.atan2(q_wz + q_xy, 1.0 - (q_xx + q_zz))
 
     return qd.Vector([roll, pitch, yaw], dt=gs.qd_float)
 
@@ -234,11 +268,12 @@ def qd_quat_mul_axis(q, axis):
 
 @qd.func
 def qd_quat_mul(u, v):
-    vu = u.outer_product(v)
-    w = vu[0, 0] - vu[1, 1] - vu[2, 2] - vu[3, 3]
-    x = vu[0, 1] + vu[1, 0] + vu[2, 3] - vu[3, 2]
-    y = vu[0, 2] - vu[1, 3] + vu[2, 0] + vu[3, 1]
-    z = vu[0, 3] + vu[1, 2] - vu[2, 1] + vu[3, 0]
+    # DEBUG: bypass `u.outer_product(v)` in case its reverse-mode AD has a sign bug for the
+    # quat-product pattern.
+    w = u[0] * v[0] - u[1] * v[1] - u[2] * v[2] - u[3] * v[3]
+    x = u[0] * v[1] + u[1] * v[0] + u[2] * v[3] - u[3] * v[2]
+    y = u[0] * v[2] - u[1] * v[3] + u[2] * v[0] + u[3] * v[1]
+    z = u[0] * v[3] + u[1] * v[2] - u[2] * v[1] + u[3] * v[0]
     return qd.Vector([w, x, y, z], dt=gs.qd_float)
 
 
@@ -248,26 +283,43 @@ def qd_transform_quat_by_quat(v, u):
 
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
-    vec = qd_quat_mul(u, v)
-    return vec.normalized()
+    # `.normalized()` is a tangent-space projection in reverse-mode AD and attenuates the
+    # chain through the w-direction at near-identity quats. For unit-norm inputs the product
+    # is unit up to round-off, so the bare quat product is numerically equivalent forward
+    # but doesn't project the backward chain.
+    return qd_quat_mul(u, v)
 
 
 @qd.func
 def qd_transform_by_quat(v, quat):
-    q_w, q_x, q_y, q_z = quat
-    q_xx, q_xy, q_xz, q_wx = q_x * q_x, q_x * q_y, q_x * q_z, q_x * q_w
-    q_yy, q_yz, q_wy = q_y * q_y, q_y * q_z, q_y * q_w
-    q_zz, q_wz = q_z * q_z, q_z * q_w
+    # DEBUG: replace tuple-unpacking + .x/.y/.z swizzle with explicit indexing in case
+    # those backward through qd.Vector drop the q_x adjoint contribution.
+    q_w = quat[0]
+    q_x = quat[1]
+    q_y = quat[2]
+    q_z = quat[3]
+    v0 = v[0]
+    v1 = v[1]
+    v2 = v[2]
+    q_xx = q_x * q_x
+    q_xy = q_x * q_y
+    q_xz = q_x * q_z
+    q_wx = q_x * q_w
+    q_yy = q_y * q_y
+    q_yz = q_y * q_z
+    q_wy = q_y * q_w
+    q_zz = q_z * q_z
+    q_wz = q_z * q_w
     q_ww = q_w * q_w
 
     return qd.Vector(
         [
-            v.x * (q_xx + q_ww - q_yy - q_zz) + v.y * (2.0 * q_xy - 2.0 * q_wz) + v.z * (2.0 * q_xz + 2.0 * q_wy),
-            v.x * (2.0 * q_wz + 2.0 * q_xy) + v.y * (q_ww - q_xx + q_yy - q_zz) + v.z * (-2.0 * q_wx + 2.0 * q_yz),
-            v.x * (-2.0 * q_wy + 2.0 * q_xz) + v.y * (2.0 * q_wx + 2.0 * q_yz) + v.z * (q_ww - q_xx - q_yy + q_zz),
+            v0 * (q_xx + q_ww - q_yy - q_zz) + v1 * (2.0 * q_xy - 2.0 * q_wz) + v2 * (2.0 * q_xz + 2.0 * q_wy),
+            v0 * (2.0 * q_wz + 2.0 * q_xy) + v1 * (q_ww - q_xx + q_yy - q_zz) + v2 * (-2.0 * q_wx + 2.0 * q_yz),
+            v0 * (-2.0 * q_wy + 2.0 * q_xz) + v1 * (2.0 * q_wx + 2.0 * q_yz) + v2 * (q_ww - q_xx - q_yy + q_zz),
         ],
         dt=gs.qd_float,
-    ) / (q_ww + q_xx + q_yy + q_zz)
+    )
 
 
 @qd.func
@@ -319,6 +371,11 @@ def qd_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
 
 @qd.func
 def qd_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
+    # `trans = trans * i_mass` rebinds the input parameter — Quadrants AD then
+    # has to track two distinct uses of the same SSA name (the original `trans`
+    # for `hhT`, the rebound one for the return), and silently drops part of
+    # the reverse-mode chain back to the original input. Use a fresh local
+    # `new_trans` for the output.
     x, y, z = trans.x, trans.y, trans.z
     xx, xy, xz, yy, yz, zz = x * x, x * y, x * z, y * y, y * z, z * z
     hhT = qd.Matrix(
@@ -331,9 +388,9 @@ def qd_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
 
     R = qd_quat_to_R(quat, eps)
     i = R @ i_inertial @ R.transpose() + hhT * i_mass
-    trans = trans * i_mass
+    new_trans = trans * i_mass
 
-    return i, trans, quat, i_mass
+    return i, new_trans, quat, i_mass
 
 
 @qd.func

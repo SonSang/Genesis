@@ -19,7 +19,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .forward_kinematics import func_update_cartesian_space
+from .forward_kinematics import func_update_cartesian_space, func_forward_velocity
 
 
 @qd.func
@@ -181,6 +181,16 @@ def kernel_prepare_backward_substep(
             force_update_fixed_geoms=False,
             is_backward=True,
         )
+        func_forward_velocity(
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=True,
+        )
 
         # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
         # Save results of [update_cartesian_space] to adjoint cache
@@ -232,17 +242,15 @@ def kernel_begin_backward_substep(
         )
 
         if not static_rigid_sim_config.enable_mujoco_compatibility:
-            # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
-            # Save results of [update_cartesian_space] to adjoint cache
             func_copy_cartesian_space(
-                dofs_state=dofs_state,
-                links_state=links_state,
-                joints_state=joints_state,
-                geoms_state=geoms_state,
-                dofs_state_adjoint_cache=dofs_state_adjoint_cache,
-                links_state_adjoint_cache=links_state_adjoint_cache,
-                joints_state_adjoint_cache=joints_state_adjoint_cache,
-                geoms_state_adjoint_cache=geoms_state_adjoint_cache,
+                dofs_state=dofs_state_adjoint_cache,
+                links_state=links_state_adjoint_cache,
+                joints_state=joints_state_adjoint_cache,
+                geoms_state=geoms_state_adjoint_cache,
+                dofs_state_adjoint_cache=dofs_state,
+                links_state_adjoint_cache=links_state,
+                joints_state_adjoint_cache=joints_state,
+                geoms_state_adjoint_cache=geoms_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
@@ -345,6 +353,34 @@ def kernel_copy_acc(
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = rigid_adjoint_cache.dofs_acc[f, i_d, i_b]
+
+
+@qd.kernel(fastcache=True)
+def kernel_copy_next_to_curr_no_check(
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Unguarded copy of `_next` slots to current. Used in the backward substep right before
+    # the forward replay so the BW kernels see the post-integrate qpos / vel:
+    #   - qpos: FK builds its Jacobian around the actual post-integrate rotation, not the
+    #     pre-integrate identity quat that `func_load_adjoint_cache` left behind (this was
+    #     what caused J4 chain attenuation on the freejoint angular DOFs).
+    #   - vel: COM_links reads `dofs_state.vel` to compute `cdofvel_*`, and forward_velocity
+    #     reads it to compute `cd_* / cdofd_*`. Real forward (`kernel_step_2` BW=False branch)
+    #     runs both with post-integrate vel (after `func_copy_next_to_curr`), so the backward
+    #     replay must mirror that to keep the forward primal consistent.
+    n_qs = rigid_global_info.qpos.shape[0]
+    n_dofs = dofs_state.vel.shape[0]
+    _B = dofs_state.vel.shape[1]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_q, i_b in qd.ndrange(n_qs, _B):
+        rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        dofs_state.vel[i_d, i_b] = dofs_state.vel_next[i_d, i_b]
 
 
 @qd.func

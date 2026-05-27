@@ -86,6 +86,7 @@ class ErrorCode(IntEnum):
     OVERFLOW_HIBERNATION_ISLANDS = 0b00000000000000000000000000000100
     INVALID_FORCE_NAN = 0b00000000000000000000000000001000
     INVALID_ACC_NAN = 0b00000000000000000000000000010000
+    MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE = 0b00000000000000000000000000100000
 
 
 # =========================================== RigidGlobalInfo ===========================================
@@ -108,7 +109,6 @@ class RigidGlobalInfo:
     geoms_init_AABB: qd.Tensor
     mass_mat: qd.Tensor
     mass_mat_L: qd.Tensor
-    mass_mat_L_bw: qd.Tensor
     mass_mat_D_inv: qd.Tensor
     mass_mat_mask: qd.Tensor
     meaninertia: qd.Tensor
@@ -138,11 +138,6 @@ def get_rigid_global_info(solver, kinematic_only):
             f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
     requires_grad = solver._requires_grad
-    mass_mat_shape_bw = maybe_shape((2, *mass_mat_shape), requires_grad)
-    if math.prod(mass_mat_shape_bw) > np.iinfo(np.int32).max:
-        gs.raise_exception(
-            f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
-        )
 
     # FIXME: Add a better split between kinematic and Genesis
     if kinematic_only:
@@ -163,7 +158,6 @@ def get_rigid_global_info(solver, kinematic_only):
             geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=()),
             mass_mat=V(dtype=gs.qd_float, shape=()),
             mass_mat_L=V(dtype=gs.qd_float, shape=()),
-            mass_mat_L_bw=V(dtype=gs.qd_float, shape=()),
             mass_mat_D_inv=V(dtype=gs.qd_float, shape=()),
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
@@ -198,7 +192,6 @@ def get_rigid_global_info(solver, kinematic_only):
         geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_, 8)),
         mass_mat=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
-        mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
         mass_parent_mask=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver.n_dofs_)),
@@ -462,6 +455,12 @@ class DiffContactInput:
     # Local positions of the 1 vertex from the two geometries that define the support point for the face above
     w_local_pos1: qd.Tensor
     w_local_pos2: qd.Tensor
+    # Plane-convex contacts only: the convex support "core" (box vertex / sphere
+    # center / capsule nearest endpoint) in the convex geom's local frame. The
+    # differentiable plane-contact reconstruction recovers the world contact as
+    # `R(convex)@core_local + pos_convex + radius*normal` (radius/normal from the
+    # geom's data + plane quat), bypassing the Minkowski-face witness above.
+    core_local: qd.Tensor
     # Reference id of the contact point, which is needed for the backward pass
     ref_id: qd.Tensor
     # Flag whether the contact data can be computed in numerically stable way in both the forward and backward passes
@@ -484,6 +483,7 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
         local_pos2_c=V_VEC(3, dtype=gs.qd_float, shape=shape),
         w_local_pos1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         w_local_pos2=V_VEC(3, dtype=gs.qd_float, shape=shape),
+        core_local=V_VEC(3, dtype=gs.qd_float, shape=shape),
         ref_id=V(dtype=gs.qd_int, shape=shape),
         valid=V(dtype=gs.qd_int, shape=shape),
         ref_penetration=V(dtype=gs.qd_float, shape=shape, needs_grad=True),

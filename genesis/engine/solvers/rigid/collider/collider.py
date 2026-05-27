@@ -808,6 +808,18 @@ class Collider:
                 self._solver._static_rigid_sim_config,
             )
 
+        # Plane-convex contacts use analytic paths that don't fill
+        # `diff_contact_input`; populate it here so the differentiable
+        # narrow-phase reverse can reconstruct them (see
+        # `kernel_fill_diff_contact_input_plane`).
+        if self._solver._static_rigid_sim_config.requires_grad:
+            narrowphase.kernel_fill_diff_contact_input_plane(
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_state,
+            )
+
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
         contact_data = self._contact_data_cache.setdefault((as_tensor, to_torch), {})
@@ -915,8 +927,16 @@ class Collider:
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
         func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
+        self.backward_narrowphase()
 
-        # Compute gradient
+    def backward_narrowphase(self):
+        """Backprop the *already-populated* contact_data.{pos,normal,penetration}.grad
+        through the differentiable narrow phase into geom pose grads.
+
+        Use this when the upstream contact-data grads were written directly
+        on-device (e.g. by `kernel_manual_add_collision_constraints_bw`), so the
+        `backward(...)` ndarray upload via `func_set_upstream_grad` is not needed.
+        """
         func_narrow_phase_diff_convex_vs_convex.grad(
             self._solver.geoms_state,
             self._solver.geoms_info,

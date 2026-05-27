@@ -28,6 +28,10 @@ from ..base_solver import Solver
 from ..kinematic_solver import KinematicSolver
 from .collider import Collider
 from .constraint import ConstraintSolver, ConstraintSolverIsland
+from .constraint.backward import (
+    kernel_manual_add_joint_limit_constraints_bw,
+    kernel_manual_add_collision_constraints_bw,
+)
 from .abd.misc import (
     func_add_safe_backward,
     func_apply_coupling_force,
@@ -90,7 +94,11 @@ from .abd.forward_kinematics import (
     kernel_update_all_verts,
     kernel_update_geom_aabbs,
     kernel_update_vgeoms,
+    kernel_COM_links,
     kernel_update_cartesian_space,
+    kernel_update_cartesian_space_one_link,
+    kernel_forward_kinematics_fk_only,
+    kernel_update_geoms_diff,
 )
 from .abd.forward_dynamics import (
     func_actuation,
@@ -113,6 +121,7 @@ from .abd.forward_dynamics import (
     kernel_update_acc,
     kernel_compute_qacc,
     kernel_forward_dynamics_without_qacc,
+    kernel_manual_compute_qacc_bw,
     update_qacc_from_qvel_delta,
     update_qvel,
 )
@@ -141,6 +150,7 @@ from .abd.accessor import (
     kernel_set_dofs_limit,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_force_grad,
     kernel_set_dofs_zero_velocity,
     kernel_set_dofs_position,
     kernel_control_dofs_force,
@@ -168,6 +178,11 @@ from .abd.diff import (
     kernel_prepare_backward_substep,
     kernel_begin_backward_substep,
     kernel_copy_acc,
+    kernel_copy_next_to_curr_no_check,
+)
+from .abd.manual_bw import (
+    kernel_manual_fk_only_bw,
+    kernel_manual_forward_velocity_bw,
 )
 
 if TYPE_CHECKING:
@@ -343,6 +358,17 @@ class RigidSolver(KinematicSolver):
             self._options.tolerance = 1e-5 if gs.qd_float == qd.f32 else 1e-8
 
         super().build()
+
+        # Python-side bound for the per-DOF backward Step 1 split of the LDLT solve.
+        # See `kernel_solve_mass_step1_one_dof_bw` in `abd/forward_dynamics.py` for
+        # the rationale (Quadrants AD cross-iter same-buffer limitation).
+        self._max_n_dofs_across_entities = max(entity.n_dofs for entity in self.entities) if self.entities else 0
+        # Python-side bound for the per-LINK backward split of
+        # `kernel_forward_velocity` / `kernel_update_cartesian_space` (mirror of
+        # the LDLT Step 1 strategy — same Quadrants AD cross-link adjoint
+        # attenuation root cause). Was hardcoded to 2 for J4 but needs to cover
+        # whichever entity has the most links (e.g. J5 chain3 = 3 links).
+        self._max_n_links_across_entities = max(entity.n_links for entity in self.entities) if self.entities else 0
 
         self._init_mass_mat()
 
@@ -1036,6 +1062,13 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS:
             gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
+        if errno & array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED_JOINT_TYPE:
+            gs.raise_exception(
+                "Encountered a joint type for which a manual backward kernel has no implementation. "
+                "Extend the corresponding `kernel_manual_*_bw` in "
+                "`genesis/engine/solvers/rigid/abd/manual_bw.py` (see guide P9 in "
+                "`notes/diffrigid_debugging_guide.md`)."
+            )
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -1275,11 +1308,72 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self.substep(f)
-
         # =================== Backward substep ======================
+        # `kernel_prepare_backward_substep` restored qpos/vel to their pre-integrate values
+        # so the integrator backward in `kernel_step_2.grad` has a clean starting point. But
+        # the post-integrate FK (`kernel_update_cartesian_space.grad` below) must build its
+        # Jacobian *at the post-integrate quaternion*, otherwise on multi-link entities the
+        # adjoint chain through the freejoint w-component collapses to zero (the d/dq[w]
+        # Jacobian of `transform_by_quat(arm_local, q)` is zero at q = identity). Copy the
+        # integrator's `_next` outputs to the current slots so the FK BW kernel reads them.
+        kernel_copy_next_to_curr_no_check(
+            dofs_state=self.dofs_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
         envs_idx = self._scene._sanitize_envs_idx(None)
         if not self._enable_mujoco_compatibility:
-            kernel_forward_velocity.grad(
+            # Forward replay 3 kernels in dependency order (FK → COM → vel)
+            # so each kernel's input slots are already populated by the
+            # previous kernel. `self.substep(f)` runs with `is_backward=True`,
+            # which skips `func_update_cartesian_space` / `func_forward_velocity`
+            # at the end of `kernel_step_2` (guards on `not is_backward`) and
+            # also skips both calls at the top of `kernel_step_1` (guards on
+            # `is_forward_pos_updated` / `is_forward_vel_updated`, set True
+            # by the previous forward substep). So these three replays are
+            # the *only* source of post-integrate FK / COM / velocity primal
+            # for the manual reverses below.
+            kernel_forward_kinematics_fk_only(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_COM_links(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            # Replay the link->geom transform (the third stage of forward
+            # `func_update_cartesian_space`: FK -> COM -> update_geoms) so its
+            # `.grad` below can reverse `geoms_state.{pos,quat}.grad` (written by
+            # `collider.backward` in the *previous* substep's constraint block)
+            # back into `links_state.{pos,quat}.grad`. The manual FK reverse only
+            # covers FK, so without this the contact grads dead-end at geoms.
+            kernel_update_geoms_diff(
+                entities_info=self.entities_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_forward_velocity(
                 envs_idx=envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
@@ -1290,20 +1384,75 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
             )
-            kernel_update_cartesian_space.grad(
+
+            # Reverse path in opposite order (vel.bw → COM.bw → FK.bw).
+            # `kernel_manual_forward_velocity_bw` writes the cross-link
+            # `cd_{vel,ang}[parent_idx]` chain explicitly (FP64-floor
+            # verified across J1/J2/J3/J4/J5 vs FD).
+            kernel_manual_forward_velocity_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
+            # `kernel_COM_links.grad` drains the `cinr_*.grad` / `cdof_*.grad`
+            # populated by the Coriolis chain in
+            # `kernel_forward_dynamics_without_qacc.grad` (which runs later
+            # in this substep_pre_coupling_grad but writes the same fields
+            # the *next* substep's BW will read).
+            kernel_COM_links.grad(
                 links_state=self.links_state,
                 links_info=self.links_info,
                 joints_state=self.joints_state,
                 joints_info=self.joints_info,
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                force_update_fixed_geoms=False,
                 is_backward=True,
+            )
+            # Reverse the link->geom transform: drain `geoms_state.{pos,quat}.grad`
+            # (left by the *previous* substep's `collider.backward`) into
+            # `links_state.{pos,quat}.grad` before the FK reverse consumes it.
+            # Then zero `geoms_state.grad` so this substep's own `collider.backward`
+            # (in the constraint block below) starts from a clean slate — the grad
+            # is consumed strictly cross-substep.
+            kernel_update_geoms_diff.grad(
+                entities_info=self.entities_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            # `geoms_state.grad` is NOT auto-zeroed between substeps (it
+            # accumulates monotonically — verified empirically). Zero it after
+            # draining so this substep's own `collider.backward` writes a clean
+            # single-substep contribution; the grad is consumed strictly
+            # cross-substep (substep f drains substep f+1's contribution).
+            self.geoms_state.pos.grad.fill(0.0)
+            self.geoms_state.quat.grad.fill(0.0)
+            # Single-call manual FK Jacobian-transpose replacing the auto-AD
+            # UCS.grad (see `notes/diffrigid_handoff_ucs_translation_drop.md`
+            # for the silent drop motivating this). Iterates leaf→root inside
+            # one kernel launch. Handles FREE / REVOLUTE / PRISMATIC / FIXED;
+            # SPHERICAL flips an errno bit checked below.
+            kernel_manual_fk_only_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
             )
 
         is_grad_valid = kernel_begin_backward_substep(
@@ -1329,40 +1478,104 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
 
         kernel_step_2.grad(
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            joints_info=self.joints_info,
-            joints_state=self.joints_state,
-            entities_state=self.entities_state,
-            entities_info=self.entities_info,
-            geoms_info=self.geoms_info,
-            geoms_state=self.geoms_state,
-            collider_state=self.collider._collider_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_backward=True,
-            errno=self._errno,
+            self.dofs_state,
+            self.dofs_info,
+            self.links_info,
+            self.links_state,
+            self.joints_info,
+            self.joints_state,
+            self.entities_state,
+            self.entities_info,
+            self.geoms_info,
+            self.geoms_state,
+            self.collider._collider_state,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
+            self.constraint_solver.contact_island.contact_island_state,
+            self._is_backward,
+            self._errno,
         )
 
-        # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
-        # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).
-        # In [kernel_forward_dynamics], we read [acc] in [func_update_acc] and overwrite it in [kernel_compute_qacc].
-        # As [kenrel_compute_qacc] is called at the end of [kernel_forward_dynamics], we first backpropagate through
-        # [kernel_compute_qacc] and then restore the original [acc] from the adjoint cache. This copy operation
-        # cannot be merged with [kernel_compute_qacc.grad] because .grad function itself is a standalone kernel.
-        # We could possibly merge this small kernel later if (1) .grad function is regarded as a function instead of a
-        # kernel, (2) we add another variable to store the new [acc] from [kernel_compute_qacc] and thus can avoid
-        # the data access violation. However, both of these require major changes.
-        kernel_compute_qacc.grad(
-            dofs_state=self.dofs_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
-        )
+        # Two backward paths for the `force → acc` mapping:
+        #
+        #   (A) Unconstrained (`disable_constraint=True`): forward is
+        #       `acc_smooth = M^{-1} force; acc = acc_smooth`, with no
+        #       constraint correction. `kernel_manual_compute_qacc_bw` does
+        #       the IFT through M once and writes `force.grad` + `mass_mat.grad`.
+        #
+        #   (B) Constrained with active joint limits: forward additionally
+        #       runs `constraint_solver.resolve(...)`, which overwrites
+        #       `acc ← constraint_state.qacc` (the LCP / Newton solution
+        #       of `M qacc = force + J^T λ` subject to `J qacc ≥ aref`).
+        #       The IFT through M alone is *wrong* in this case (drops
+        #       `M^{-1} J^T λ`), so we instead drive `constraint_solver.backward`
+        #       — which solves the adjoint KKT system on the active set and
+        #       emits `dL_dM, dL_djac, dL_daref, dL_defc_D, dL_dforce` — and
+        #       then per-constraint-type manual reverses
+        #       (`kernel_manual_add_joint_limit_constraints_bw` and, when
+        #       collision is on, `kernel_manual_add_collision_constraints_bw`
+        #       + `collider.backward`) to walk `dL_djac`/`dL_daref`/`dL_defc_D`
+        #       back into `qpos.grad` / `dofs_vel.grad` / contact-data grads.
+        _has_collision = (not self._disable_constraint) and self._enable_collision
+        _has_joint_limit = (not self._disable_constraint) and self._options.enable_joint_limit
+        _constrained_bw = _has_collision or _has_joint_limit
+        if _constrained_bw:
+            dL_dqacc_np = self.dofs_state.acc.grad.to_numpy()
+            self.dofs_state.acc.grad.fill(0.0)
+
+            self.constraint_solver.backward(dL_dqacc_np)
+
+            dL_dforce_np = self.constraint_solver.constraint_state.dL_dforce.to_numpy()
+            cur_force_grad = self.dofs_state.force.grad.to_numpy()
+            self.dofs_state.force.grad.from_numpy(cur_force_grad + dL_dforce_np)
+
+            dL_dM_np = self.constraint_solver.constraint_state.dL_dM.to_numpy()
+            cur_mass_grad = self._rigid_global_info.mass_mat.grad.to_numpy()
+            self._rigid_global_info.mass_mat.grad.from_numpy(cur_mass_grad + dL_dM_np)
+
+            if _has_collision:
+                # Manual reverse of the collision constraint rows -> contact-data
+                # grads, then differentiate the narrow-phase (diff GJK) through
+                # collider.backward into geom pose grads.
+                collider_state = self.collider._collider_state
+                collider_state.contact_data.pos.grad.fill(0.0)
+                collider_state.contact_data.normal.grad.fill(0.0)
+                collider_state.contact_data.penetration.grad.fill(0.0)
+                kernel_manual_add_collision_constraints_bw(
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    dofs_state=self.dofs_state,
+                    constraint_state=self.constraint_solver.constraint_state,
+                    collider_state=collider_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+                # contact-data grads are written directly above, so skip the
+                # ndarray-upload path and run only the narrow-phase reverse.
+                self.collider.backward_narrowphase()
+
+            if _has_joint_limit:
+                kernel_manual_add_joint_limit_constraints_bw(
+                    links_info=self.links_info,
+                    joints_info=self.joints_info,
+                    dofs_info=self.dofs_info,
+                    dofs_state=self.dofs_state,
+                    rigid_global_info=self._rigid_global_info,
+                    constraint_state=self.constraint_solver.constraint_state,
+                    collider_state=self.collider._collider_state,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    enable_collision=_has_collision,
+                )
+        else:
+            # Manual backward for `func_compute_qacc` via the Implicit Function
+            # Theorem. See `kernel_manual_compute_qacc_bw` docstring for the
+            # full chain (including the `mass_mat.grad` IFT seed it emits).
+            kernel_manual_compute_qacc_bw(
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
         kernel_copy_acc(
             f=f,
             dofs_state=self.dofs_state,
@@ -1370,6 +1583,10 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
+        # Monolithic reverse of the forward-dynamics-without-qacc stage. The
+        # primal-consistency fix in the backward replay removed the need for the
+        # earlier per-sub-func split (introduced to work around a cross-sub-func
+        # silent drop), so this single `.grad` call is used directly.
         kernel_forward_dynamics_without_qacc.grad(
             links_state=self.links_state,
             links_info=self.links_info,
@@ -1387,7 +1604,49 @@ class RigidSolver(KinematicSolver):
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
-            kernel_forward_velocity.grad(
+            # Forward replay 3 kernels in dependency order (FK → COM → vel)
+            # — mirror of the post-FK section above. See that site for the
+            # rationale (self.substep BW=True skips the post-integrate UCS /
+            # forward_velocity, so these three replays are the only source of
+            # post-integrate primal for the manual reverses below).
+            kernel_forward_kinematics_fk_only(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_COM_links(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            # Replay the link->geom transform (see the post-FK section above for
+            # rationale) so its `.grad` below reverses the first substep's
+            # `geoms_state.{pos,quat}.grad` into the initial `links_state` grad.
+            kernel_update_geoms_diff(
+                entities_info=self.entities_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            kernel_forward_velocity(
                 envs_idx=envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
@@ -1398,20 +1657,53 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=True,
             )
-            kernel_update_cartesian_space.grad(
+
+            # Reverse path in opposite order (vel.bw → COM.bw → FK.bw).
+            kernel_manual_forward_velocity_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
+            kernel_COM_links.grad(
                 links_state=self.links_state,
                 links_info=self.links_info,
                 joints_state=self.joints_state,
                 joints_info=self.joints_info,
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                force_update_fixed_geoms=False,
                 is_backward=True,
+            )
+            # Drain this (first) substep's geom-pose grads into the initial
+            # links grad, then zero so a later backward starts clean.
+            kernel_update_geoms_diff.grad(
+                entities_info=self.entities_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=True,
+            )
+            self.geoms_state.pos.grad.fill(0.0)
+            self.geoms_state.quat.grad.fill(0.0)
+            kernel_manual_fk_only_bw(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
             )
 
         # Change back to forward mode
@@ -1635,9 +1927,17 @@ class RigidSolver(KinematicSolver):
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
 
-            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos)
-            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel)
-            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc)
+            # CRITICAL: `copy=True` required — with zerocopy backend,
+            # `qd_to_numpy` returns a view of the buffer. Without copying,
+            # subsequent `kernel_save_adjoint_cache` calls during later
+            # forward substeps overwrite the same buffer, silently mutating
+            # this ckpt. The result: in BW for step `k < N-1`,
+            # `load_ckpt` reads the snapshot but it actually contains the
+            # state at start of step `k+1` (= post-step-`k`), not start of
+            # step `k`. Root cause of catastrophic J4 N≥2 rel error.
+            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
+            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)
+            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc, copy=True)
 
             for entity in self._entities:
                 entity.save_ckpt(ckpt_name)

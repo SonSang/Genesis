@@ -171,6 +171,42 @@ def kernel_forward_kinematics(
 
 
 @qd.kernel(fastcache=True)
+def kernel_forward_kinematics_fk_only(
+    envs_idx: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """FK-only single-call kernel. Same as `kernel_forward_kinematics` but
+    skips `func_COM_links` / `func_forward_velocity_batch` — those are
+    handled by separate forward-replay + manual-reverse pairs in
+    `substep_pre_coupling_grad`. Used as the BW=True forward replay
+    before `kernel_manual_uc_bw_one_link`."""
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
+        func_forward_kinematics_batch(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
+
+
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -296,17 +332,9 @@ def func_COM_links(
     i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
-        (
-            range(rigid_global_info.n_awake_entities[i_b])
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else range(entities_info.n_links.shape[0])
-        )
-        if qd.static(not BW)
-        else (
-            qd.static(range(static_rigid_sim_config.max_n_awake_entities))
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(static_rigid_sim_config.n_entities))
-        )
+        range(rigid_global_info.n_awake_entities[i_b])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else range(entities_info.n_links.shape[0])
     ):
         if func_check_index_range(
             i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
@@ -352,228 +380,369 @@ def func_COM_links_entity(
     BW = qd.static(is_backward)
     i_b = qd.cast(i_b, qd.i32)
 
-    # Becomes static loop in backward pass, because we assume this loop is an inner loop
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        links_state.root_COM_bw[i_l, i_b].fill(0.0)
+        links_state.mass_sum[i_l, i_b] = 0.0
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            links_state.root_COM_bw[i_l, i_b].fill(0.0)
-            links_state.mass_sum[i_l, i_b] = 0.0
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+        mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
+        (
+            links_state.i_pos_bw[i_l, i_b],
+            links_state.i_quat[i_l, i_b],
+        ) = gu.qd_transform_pos_quat_by_trans_quat(
+            links_info.inertial_pos[I_l] + links_state.i_pos_shift[i_l, i_b],
+            links_info.inertial_quat[I_l],
+            links_state.pos[i_l, i_b],
+            links_state.quat[i_l, i_b],
+        )
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        i_r = links_info.root_idx[I_l]
+        links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
+        qd.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
 
-            mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
-            (
-                links_state.i_pos_bw[i_l, i_b],
-                links_state.i_quat[i_l, i_b],
-            ) = gu.qd_transform_pos_quat_by_trans_quat(
-                links_info.inertial_pos[I_l] + links_state.i_pos_shift[i_l, i_b],
-                links_info.inertial_quat[I_l],
-                links_state.pos[i_l, i_b],
-                links_state.quat[i_l, i_b],
-            )
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-            i_r = links_info.root_idx[I_l]
-            links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
-            qd.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
+        i_r = links_info.root_idx[I_l]
+        if i_l == i_r:
+            mass_sum = links_state.mass_sum[i_l, i_b]
+            if mass_sum > EPS:
+                links_state.root_COM[i_l, i_b] = links_state.root_COM_bw[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+            else:
+                links_state.root_COM[i_l, i_b] = links_state.i_pos_bw[i_r, i_b]
 
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        i_r = links_info.root_idx[I_l]
+        links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
 
-            i_r = links_info.root_idx[I_l]
-            if i_l == i_r:
-                mass_sum = links_state.mass_sum[i_l, i_b]
-                if mass_sum > EPS:
-                    links_state.root_COM[i_l, i_b] = links_state.root_COM_bw[i_l, i_b] / links_state.mass_sum[i_l, i_b]
-                else:
-                    links_state.root_COM[i_l, i_b] = links_state.i_pos_bw[i_r, i_b]
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+        i_r = links_info.root_idx[I_l]
+        links_state.i_pos[i_l, i_b] = links_state.i_pos_bw[i_l, i_b] - links_state.root_COM[i_l, i_b]
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        i_inertial = links_info.inertial_i[I_l]
+        i_mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
+        (
+            links_state.cinr_inertial[i_l, i_b],
+            links_state.cinr_pos[i_l, i_b],
+            links_state.cinr_quat[i_l, i_b],
+            links_state.cinr_mass[i_l, i_b],
+        ) = gu.qd_transform_inertia_by_trans_quat(
+            i_inertial,
+            i_mass,
+            links_state.i_pos[i_l, i_b],
+            links_state.i_quat[i_l, i_b],
+            rigid_global_info.EPS[None],
+        )
 
-            i_r = links_info.root_idx[I_l]
-            links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+        if links_info.n_dofs[I_l] > 0:
+            i_p = links_info.parent_idx[I_l]
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            _i_j = links_info.joint_start[I_l]
+            _I_j = [_i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else _i_j
+            joint_type = joints_info.type[_I_j]
 
-            i_r = links_info.root_idx[I_l]
-            links_state.i_pos[i_l, i_b] = links_state.i_pos_bw[i_l, i_b] - links_state.root_COM[i_l, i_b]
+            p_pos = qd.Vector.zero(gs.qd_float, 3)
+            p_quat = gu.qd_identity_quat()
+            if i_p != -1:
+                p_pos = links_state.pos[i_p, i_b]
+                p_quat = links_state.quat[i_p, i_b]
 
-            i_inertial = links_info.inertial_i[I_l]
-            i_mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
-            (
-                links_state.cinr_inertial[i_l, i_b],
-                links_state.cinr_pos[i_l, i_b],
-                links_state.cinr_quat[i_l, i_b],
-                links_state.cinr_mass[i_l, i_b],
-            ) = gu.qd_transform_inertia_by_trans_quat(
-                i_inertial,
-                i_mass,
-                links_state.i_pos[i_l, i_b],
-                links_state.i_quat[i_l, i_b],
-                rigid_global_info.EPS[None],
-            )
+            if joint_type == gs.JOINT_TYPE.FREE or (links_info.is_fixed[I_l] and i_p == -1):
+                links_state.j_pos[i_l, i_b] = links_state.pos[i_l, i_b]
+                links_state.j_quat[i_l, i_b] = links_state.quat[i_l, i_b]
+            else:
+                (
+                    links_state.j_pos_bw[i_l, 0, i_b],
+                    links_state.j_quat_bw[i_l, 0, i_b],
+                ) = gu.qd_transform_pos_quat_by_trans_quat(links_info.pos[I_l], links_info.quat[I_l], p_pos, p_quat)
 
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+                n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                for i_j_ in range(n_joints):
+                    i_j = i_j_ + links_info.joint_start[I_l]
 
-            if links_info.n_dofs[I_l] > 0:
-                i_p = links_info.parent_idx[I_l]
+                    curr_i_j = 0 if qd.static(not BW) else i_j_
+                    next_i_j = 0 if qd.static(not BW) else i_j_ + 1
 
-                _i_j = links_info.joint_start[I_l]
-                _I_j = [_i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else _i_j
-                joint_type = joints_info.type[_I_j]
-
-                p_pos = qd.Vector.zero(gs.qd_float, 3)
-                p_quat = gu.qd_identity_quat()
-                if i_p != -1:
-                    p_pos = links_state.pos[i_p, i_b]
-                    p_quat = links_state.quat[i_p, i_b]
-
-                if joint_type == gs.JOINT_TYPE.FREE or (links_info.is_fixed[I_l] and i_p == -1):
-                    links_state.j_pos[i_l, i_b] = links_state.pos[i_l, i_b]
-                    links_state.j_quat[i_l, i_b] = links_state.quat[i_l, i_b]
-                else:
-                    (
-                        links_state.j_pos_bw[i_l, 0, i_b],
-                        links_state.j_quat_bw[i_l, 0, i_b],
-                    ) = gu.qd_transform_pos_quat_by_trans_quat(links_info.pos[I_l], links_info.quat[I_l], p_pos, p_quat)
-
-                    n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
-
-                    for i_j_ in (
-                        range(n_joints)
-                        if qd.static(not BW)
-                        else qd.static(range(static_rigid_sim_config.max_n_joints_per_link))
+                    if func_check_index_range(
+                        i_j,
+                        links_info.joint_start[I_l],
+                        links_info.joint_end[I_l],
+                        BW,
                     ):
-                        i_j = i_j_ + links_info.joint_start[I_l]
-
-                        curr_i_j = 0 if qd.static(not BW) else i_j_
-                        next_i_j = 0 if qd.static(not BW) else i_j_ + 1
-
-                        if func_check_index_range(
-                            i_j,
-                            links_info.joint_start[I_l],
-                            links_info.joint_end[I_l],
-                            BW,
-                        ):
-                            I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
-
-                            (
-                                links_state.j_pos_bw[i_l, next_i_j, i_b],
-                                links_state.j_quat_bw[i_l, next_i_j, i_b],
-                            ) = gu.qd_transform_pos_quat_by_trans_quat(
-                                joints_info.pos[I_j],
-                                gu.qd_identity_quat(),
-                                links_state.j_pos_bw[i_l, curr_i_j, i_b],
-                                links_state.j_quat_bw[i_l, curr_i_j, i_b],
-                            )
-
-                    i_j_ = 0 if qd.static(not BW) else n_joints
-                    links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, i_j_, i_b]
-                    links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
-
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
-
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
-
-            if links_info.n_dofs[I_l] > 0:
-                for i_j_ in (
-                    range(links_info.joint_start[I_l], links_info.joint_end[I_l])
-                    if qd.static(not BW)
-                    else qd.static(range(static_rigid_sim_config.max_n_joints_per_link))
-                ):
-                    i_j = i_j_ if qd.static(not BW) else (i_j_ + links_info.joint_start[I_l])
-
-                    if func_check_index_range(i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], BW):
-                        offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
                         I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
-                        joint_type = joints_info.type[I_j]
 
-                        dof_start = joints_info.dof_start[I_j]
+                        (
+                            links_state.j_pos_bw[i_l, next_i_j, i_b],
+                            links_state.j_quat_bw[i_l, next_i_j, i_b],
+                        ) = gu.qd_transform_pos_quat_by_trans_quat(
+                            joints_info.pos[I_j],
+                            gu.qd_identity_quat(),
+                            links_state.j_pos_bw[i_l, curr_i_j, i_b],
+                            links_state.j_quat_bw[i_l, curr_i_j, i_b],
+                        )
 
-                        if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                            dofs_state.cdof_ang[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
-                            dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b].cross(offset_pos)
-                        elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-                            dofs_state.cdof_ang[dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                            dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
-                        elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                            xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
-                            for i in qd.static(range(3)):
-                                dofs_state.cdof_ang[i + dof_start, i_b] = xmat_T[i, :]
-                                dofs_state.cdof_vel[i + dof_start, i_b] = xmat_T[i, :].cross(offset_pos)
-                        elif joint_type == gs.JOINT_TYPE.FREE:
-                            for i in qd.static(range(3)):
-                                dofs_state.cdof_ang[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                                dofs_state.cdof_vel[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                                dofs_state.cdof_vel[i + dof_start, i_b][i] = 1.0
+                i_j_ = 0 if qd.static(not BW) else n_joints
+                links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, i_j_, i_b]
+                links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
 
-                            xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
-                            for i in qd.static(range(3)):
-                                dofs_state.cdof_ang[i + dof_start + 3, i_b] = xmat_T[i, :]
-                                dofs_state.cdof_vel[i + dof_start + 3, i_b] = xmat_T[i, :].cross(offset_pos)
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-                        for i_d_ in (
-                            range(dof_start, joints_info.dof_end[I_j])
-                            if qd.static(not BW)
-                            else qd.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
-                        ):
-                            i_d = i_d_ if qd.static(not BW) else (i_d_ + dof_start)
-                            if func_check_index_range(i_d, dof_start, joints_info.dof_end[I_j], BW):
-                                dofs_state.cdofvel_ang[i_d, i_b] = (
-                                    dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                )
-                                dofs_state.cdofvel_vel[i_d, i_b] = (
-                                    dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                )
+        if links_info.n_dofs[I_l] > 0:
+            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+                offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
+                I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                joint_type = joints_info.type[I_j]
+
+                dof_start = joints_info.dof_start[I_j]
+
+                if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                    dofs_state.cdof_ang[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
+                    dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b].cross(offset_pos)
+                elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                    dofs_state.cdof_ang[dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
+                elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                    xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start, i_b] = xmat_T[i, :]
+                        dofs_state.cdof_vel[i + dof_start, i_b] = xmat_T[i, :].cross(offset_pos)
+                elif joint_type == gs.JOINT_TYPE.FREE:
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        dofs_state.cdof_vel[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        dofs_state.cdof_vel[i + dof_start, i_b][i] = 1.0
+
+                    xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start + 3, i_b] = xmat_T[i, :]
+                        dofs_state.cdof_vel[i + dof_start + 3, i_b] = xmat_T[i, :].cross(offset_pos)
+
+                for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                    dofs_state.cdofvel_ang[i_d, i_b] = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                    dofs_state.cdofvel_vel[i_d, i_b] = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
+
+
+@qd.func
+def func_j_pos_quat_propagation_entity(
+    i_e,
+    i_b,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    entities_info: array_class.EntitiesInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Phase 5 of `func_COM_links_entity` extracted as a standalone function.
+
+    Computes `j_pos`, `j_quat`, `j_pos_bw`, `j_quat_bw` from `links_state.pos`,
+    `links_state.quat` (and parent's pos/quat through chain). Phase 5 is
+    independent of Phase 0-4, 6 — uses no state set by them, and its outputs
+    are consumed by no other phase. So split is safe.
+
+    Extraction motivation: Quadrants AD silently drops cross-link grad chain
+    (parent's `links_state.pos[i_p, i_b]` / `links_state.quat[i_p, i_b]` read
+    into local `p_pos`, `p_quat`). On J4/J5 standalone FD verification of
+    `kernel_COM_links` shows pos/quat.grad rel error ~17-86%, while other
+    inputs (xanchor, xaxis, vel, mass_shift, i_pos_shift) pass FP64 floor.
+    Splitting Phase 5 into its own kernel allows replacing its backward with
+    a manual chain-rule implementation (`kernel_manual_COM_links_phase5_bw`
+    in `manual_bw.py`).
+    """
+    BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        if links_info.n_dofs[I_l] > 0:
+            i_p = links_info.parent_idx[I_l]
+
+            _i_j = links_info.joint_start[I_l]
+            _I_j = [_i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else _i_j
+            joint_type = joints_info.type[_I_j]
+
+            p_pos = qd.Vector.zero(gs.qd_float, 3)
+            p_quat = gu.qd_identity_quat()
+            if i_p != -1:
+                p_pos = links_state.pos[i_p, i_b]
+                p_quat = links_state.quat[i_p, i_b]
+
+            if joint_type == gs.JOINT_TYPE.FREE or (links_info.is_fixed[I_l] and i_p == -1):
+                links_state.j_pos[i_l, i_b] = links_state.pos[i_l, i_b]
+                links_state.j_quat[i_l, i_b] = links_state.quat[i_l, i_b]
+            else:
+                (
+                    links_state.j_pos_bw[i_l, 0, i_b],
+                    links_state.j_quat_bw[i_l, 0, i_b],
+                ) = gu.qd_transform_pos_quat_by_trans_quat(links_info.pos[I_l], links_info.quat[I_l], p_pos, p_quat)
+
+                n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+
+                for i_j_ in range(n_joints):
+                    i_j = i_j_ + links_info.joint_start[I_l]
+
+                    curr_i_j = 0 if qd.static(not BW) else i_j_
+                    next_i_j = 0 if qd.static(not BW) else i_j_ + 1
+
+                    if func_check_index_range(
+                        i_j,
+                        links_info.joint_start[I_l],
+                        links_info.joint_end[I_l],
+                        BW,
+                    ):
+                        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+
+                        (
+                            links_state.j_pos_bw[i_l, next_i_j, i_b],
+                            links_state.j_quat_bw[i_l, next_i_j, i_b],
+                        ) = gu.qd_transform_pos_quat_by_trans_quat(
+                            joints_info.pos[I_j],
+                            gu.qd_identity_quat(),
+                            links_state.j_pos_bw[i_l, curr_i_j, i_b],
+                            links_state.j_quat_bw[i_l, curr_i_j, i_b],
+                        )
+
+                i_j_ = 0 if qd.static(not BW) else n_joints
+                links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, i_j_, i_b]
+                links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
+
+
+@qd.func
+def func_COM_links_entity_main(
+    i_e,
+    i_b,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """`func_COM_links_entity` minus Phase 5 (j_pos/j_quat propagation).
+
+    Used by `kernel_COM_links_main` whose backward (Quadrants AD) is paired
+    with `kernel_manual_COM_links_phase5_bw` for the missing Phase 5 chain.
+    Body is byte-identical to `func_COM_links_entity` except the Phase 5
+    block (forward_kinematics.py:407-460 in the original) is omitted.
+    """
+    EPS = rigid_global_info.EPS[None]
+    i_b = qd.cast(i_b, qd.i32)
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        links_state.root_COM_bw[i_l, i_b].fill(0.0)
+        links_state.mass_sum[i_l, i_b] = 0.0
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
+        (
+            links_state.i_pos_bw[i_l, i_b],
+            links_state.i_quat[i_l, i_b],
+        ) = gu.qd_transform_pos_quat_by_trans_quat(
+            links_info.inertial_pos[I_l] + links_state.i_pos_shift[i_l, i_b],
+            links_info.inertial_quat[I_l],
+            links_state.pos[i_l, i_b],
+            links_state.quat[i_l, i_b],
+        )
+
+        i_r = links_info.root_idx[I_l]
+        links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
+        qd.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        i_r = links_info.root_idx[I_l]
+        if i_l == i_r:
+            mass_sum = links_state.mass_sum[i_l, i_b]
+            if mass_sum > EPS:
+                links_state.root_COM[i_l, i_b] = links_state.root_COM_bw[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+            else:
+                links_state.root_COM[i_l, i_b] = links_state.i_pos_bw[i_r, i_b]
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        i_r = links_info.root_idx[I_l]
+        links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        i_r = links_info.root_idx[I_l]
+        links_state.i_pos[i_l, i_b] = links_state.i_pos_bw[i_l, i_b] - links_state.root_COM[i_l, i_b]
+
+        i_inertial = links_info.inertial_i[I_l]
+        i_mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
+        (
+            links_state.cinr_inertial[i_l, i_b],
+            links_state.cinr_pos[i_l, i_b],
+            links_state.cinr_quat[i_l, i_b],
+            links_state.cinr_mass[i_l, i_b],
+        ) = gu.qd_transform_inertia_by_trans_quat(
+            i_inertial,
+            i_mass,
+            links_state.i_pos[i_l, i_b],
+            links_state.i_quat[i_l, i_b],
+            rigid_global_info.EPS[None],
+        )
+
+    # Phase 5 (j_pos/j_quat propagation) intentionally omitted — see
+    # `func_j_pos_quat_propagation_entity` for the extracted version.
+
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+        if links_info.n_dofs[I_l] > 0:
+            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+                offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
+                I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                joint_type = joints_info.type[I_j]
+
+                dof_start = joints_info.dof_start[I_j]
+
+                if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                    dofs_state.cdof_ang[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
+                    dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b].cross(offset_pos)
+                elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                    dofs_state.cdof_ang[dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    dofs_state.cdof_vel[dof_start, i_b] = joints_state.xaxis[i_j, i_b]
+                elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                    xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start, i_b] = xmat_T[i, :]
+                        dofs_state.cdof_vel[i + dof_start, i_b] = xmat_T[i, :].cross(offset_pos)
+                elif joint_type == gs.JOINT_TYPE.FREE:
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        dofs_state.cdof_vel[i + dof_start, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        dofs_state.cdof_vel[i + dof_start, i_b][i] = 1.0
+
+                    xmat_T = gu.qd_quat_to_R(links_state.quat[i_l, i_b], EPS).transpose()
+                    for i in qd.static(range(3)):
+                        dofs_state.cdof_ang[i + dof_start + 3, i_b] = xmat_T[i, :]
+                        dofs_state.cdof_vel[i + dof_start + 3, i_b] = xmat_T[i, :].cross(offset_pos)
+
+                for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                    dofs_state.cdofvel_ang[i_d, i_b] = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                    dofs_state.cdofvel_vel[i_d, i_b] = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
 
 
 @qd.func
@@ -597,143 +766,342 @@ def func_forward_kinematics_entity(
     WR = qd.static(func_write_and_read_field_if)
     i_b = qd.cast(i_b, qd.i32)
 
-    # Becomes static loop in backward pass, because we assume this loop is an inner loop
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = gs.qd_int(i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e]))
+    for i_l_ in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        i_l = gs.qd_int(i_l_)
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
-            I_l0 = (i_l, 0, i_b)
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        I_l0 = (i_l, 0, i_b)
 
-            pos = W(links_state.pos_bw, I_l0, links_info.pos[I_l], BW)
-            quat = W(links_state.quat_bw, I_l0, links_info.quat[I_l], BW)
-            if links_info.parent_idx[I_l] != -1:
-                parent_pos = links_state.pos[links_info.parent_idx[I_l], i_b]
-                parent_quat = links_state.quat[links_info.parent_idx[I_l], i_b]
-                pos_ = parent_pos + gu.qd_transform_by_quat(links_info.pos[I_l], parent_quat)
-                quat_ = gu.qd_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
+        pos = W(links_state.pos_bw, I_l0, links_info.pos[I_l], BW)
+        quat = W(links_state.quat_bw, I_l0, links_info.quat[I_l], BW)
+        if links_info.parent_idx[I_l] != -1:
+            parent_pos = links_state.pos[links_info.parent_idx[I_l], i_b]
+            parent_quat = links_state.quat[links_info.parent_idx[I_l], i_b]
+            pos_ = parent_pos + gu.qd_transform_by_quat(links_info.pos[I_l], parent_quat)
+            quat_ = gu.qd_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
 
-                pos = W(links_state.pos_bw, I_l0, pos_, BW)
-                quat = W(links_state.quat_bw, I_l0, quat_, BW)
+            pos = W(links_state.pos_bw, I_l0, pos_, BW)
+            quat = W(links_state.quat_bw, I_l0, quat_, BW)
 
-            n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+        n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
-            for i_j_ in (
-                range(n_joints)
-                if qd.static(not BW)
-                else qd.static(range(static_rigid_sim_config.max_n_joints_per_link))
-            ):
-                i_j = i_j_ + links_info.joint_start[I_l]
+        for i_j_ in range(n_joints):
+            i_j = i_j_ + links_info.joint_start[I_l]
 
-                curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
-                next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
+            curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
+            next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
 
-                if func_check_index_range(i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], BW):
-                    I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
-                    joint_type = joints_info.type[I_j]
-                    q_start = joints_info.q_start[I_j]
-                    dof_start = joints_info.dof_start[I_j]
-                    I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
+            I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+            joint_type = joints_info.type[I_j]
+            q_start = joints_info.q_start[I_j]
+            dof_start = joints_info.dof_start[I_j]
+            I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
 
-                    # compute axis and anchor
-                    if joint_type == gs.JOINT_TYPE.FREE:
-                        joints_state.xanchor[i_j, i_b] = qd.Vector(
-                            [
-                                rigid_global_info.qpos[q_start, i_b],
-                                rigid_global_info.qpos[q_start + 1, i_b],
-                                rigid_global_info.qpos[q_start + 2, i_b],
-                            ]
-                        )
-                        joints_state.xaxis[i_j, i_b] = qd.Vector([0.0, 0.0, 1.0])
-                    elif joint_type == gs.JOINT_TYPE.FIXED:
-                        pass
-                    else:
-                        axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
-                        if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                            axis = dofs_info.motion_ang[I_d]
-                        elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-                            axis = dofs_info.motion_vel[I_d]
+            # compute axis and anchor
+            if joint_type == gs.JOINT_TYPE.FREE:
+                joints_state.xanchor[i_j, i_b] = qd.Vector(
+                    [
+                        rigid_global_info.qpos[q_start, i_b],
+                        rigid_global_info.qpos[q_start + 1, i_b],
+                        rigid_global_info.qpos[q_start + 2, i_b],
+                    ]
+                )
+                joints_state.xaxis[i_j, i_b] = qd.Vector([0.0, 0.0, 1.0])
+            elif joint_type == gs.JOINT_TYPE.FIXED:
+                pass
+            else:
+                axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+                if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                    axis = dofs_info.motion_ang[I_d]
+                elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                    axis = dofs_info.motion_vel[I_d]
 
-                        pos_ = R(links_state.pos_bw, curr_I, pos, BW)
-                        quat_ = R(links_state.quat_bw, curr_I, quat, BW)
+                pos_ = R(links_state.pos_bw, curr_I, pos, BW)
+                quat_ = R(links_state.quat_bw, curr_I, quat, BW)
 
-                        joints_state.xanchor[i_j, i_b] = gu.qd_transform_by_quat(joints_info.pos[I_j], quat_) + pos_
-                        joints_state.xaxis[i_j, i_b] = gu.qd_transform_by_quat(axis, quat_)
+                joints_state.xanchor[i_j, i_b] = gu.qd_transform_by_quat(joints_info.pos[I_j], quat_) + pos_
+                joints_state.xaxis[i_j, i_b] = gu.qd_transform_by_quat(axis, quat_)
 
-                    if joint_type == gs.JOINT_TYPE.FREE:
-                        pos_ = qd.Vector(
-                            [
-                                rigid_global_info.qpos[q_start, i_b],
-                                rigid_global_info.qpos[q_start + 1, i_b],
-                                rigid_global_info.qpos[q_start + 2, i_b],
-                            ],
-                            dt=gs.qd_float,
-                        )
-                        quat_ = qd.Vector(
-                            [
-                                rigid_global_info.qpos[q_start + 3, i_b],
-                                rigid_global_info.qpos[q_start + 4, i_b],
-                                rigid_global_info.qpos[q_start + 5, i_b],
-                                rigid_global_info.qpos[q_start + 6, i_b],
-                            ],
-                            dt=gs.qd_float,
-                        )
-                        quat_ = quat_ / quat_.norm()
-                        pos = WR(links_state.pos_bw, next_I, pos_, BW)
-                        quat = WR(links_state.quat_bw, next_I, quat_, BW)
+            if joint_type == gs.JOINT_TYPE.FREE:
+                pos_ = qd.Vector(
+                    [
+                        rigid_global_info.qpos[q_start, i_b],
+                        rigid_global_info.qpos[q_start + 1, i_b],
+                        rigid_global_info.qpos[q_start + 2, i_b],
+                    ],
+                    dt=gs.qd_float,
+                )
+                quat_ = qd.Vector(
+                    [
+                        rigid_global_info.qpos[q_start + 3, i_b],
+                        rigid_global_info.qpos[q_start + 4, i_b],
+                        rigid_global_info.qpos[q_start + 5, i_b],
+                        rigid_global_info.qpos[q_start + 6, i_b],
+                    ],
+                    dt=gs.qd_float,
+                )
+                # qpos[3:7] is already unit (integrator's transform_quat_by_quat normalises
+                # before storing). Re-normalising here is redundant forward (divides by 1)
+                # but the backward of `quat / quat.norm()` is a tangent-space projection
+                # that attenuates the qpos[w] adjoint to near-zero for near-identity quats —
+                # which surfaces as J4 angular-DOF v.grad being ~100x smaller than FD.
+                # quat_ = quat_ / quat_.norm()
+                pos = WR(links_state.pos_bw, next_I, pos_, BW)
+                quat = WR(links_state.quat_bw, next_I, quat_, BW)
 
-                        xyz = gu.qd_quat_to_xyz(quat, rigid_global_info.EPS[None])
-                        for j in qd.static(range(3)):
-                            dofs_state.pos[dof_start + j, i_b] = pos[j]
-                            dofs_state.pos[dof_start + 3 + j, i_b] = xyz[j]
-                    elif joint_type == gs.JOINT_TYPE.FIXED:
-                        pass
-                    elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                        qloc = qd.Vector(
-                            [
-                                rigid_global_info.qpos[q_start, i_b],
-                                rigid_global_info.qpos[q_start + 1, i_b],
-                                rigid_global_info.qpos[q_start + 2, i_b],
-                                rigid_global_info.qpos[q_start + 3, i_b],
-                            ],
-                            dt=gs.qd_float,
-                        )
-                        xyz = gu.qd_quat_to_xyz(qloc, rigid_global_info.EPS[None])
-                        for j in qd.static(range(3)):
-                            dofs_state.pos[dof_start + j, i_b] = xyz[j]
-                        quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
-                        quat = WR(links_state.quat_bw, next_I, quat_, BW)
-                        pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
-                        pos = W(links_state.pos_bw, next_I, pos_, BW)
-                    elif joint_type == gs.JOINT_TYPE.REVOLUTE:
-                        axis = dofs_info.motion_ang[I_d]
-                        dofs_state.pos[dof_start, i_b] = (
-                            rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
-                        )
-                        qloc = gu.qd_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], rigid_global_info.EPS[None])
-                        quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
-                        quat = WR(links_state.quat_bw, next_I, quat_, BW)
-                        pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
-                        pos = W(links_state.pos_bw, next_I, pos_, BW)
-                    else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
-                        dofs_state.pos[dof_start, i_b] = (
-                            rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
-                        )
-                        pos_ = (
-                            R(links_state.pos_bw, curr_I, pos, BW)
-                            + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
-                        )
-                        pos = W(links_state.pos_bw, next_I, pos_, BW)
+                xyz = gu.qd_quat_to_xyz(quat, rigid_global_info.EPS[None])
+                for j in qd.static(range(3)):
+                    dofs_state.pos[dof_start + j, i_b] = pos[j]
+                    dofs_state.pos[dof_start + 3 + j, i_b] = xyz[j]
+            elif joint_type == gs.JOINT_TYPE.FIXED:
+                pass
+            elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                qloc = qd.Vector(
+                    [
+                        rigid_global_info.qpos[q_start, i_b],
+                        rigid_global_info.qpos[q_start + 1, i_b],
+                        rigid_global_info.qpos[q_start + 2, i_b],
+                        rigid_global_info.qpos[q_start + 3, i_b],
+                    ],
+                    dt=gs.qd_float,
+                )
+                xyz = gu.qd_quat_to_xyz(qloc, rigid_global_info.EPS[None])
+                for j in qd.static(range(3)):
+                    dofs_state.pos[dof_start + j, i_b] = xyz[j]
+                quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
+                quat = WR(links_state.quat_bw, next_I, quat_, BW)
+                pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
+                pos = W(links_state.pos_bw, next_I, pos_, BW)
+            elif joint_type == gs.JOINT_TYPE.REVOLUTE:
+                axis = dofs_info.motion_ang[I_d]
+                dofs_state.pos[dof_start, i_b] = (
+                    rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+                )
+                qloc = gu.qd_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], rigid_global_info.EPS[None])
+                quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
+                quat = WR(links_state.quat_bw, next_I, quat_, BW)
+                pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
+                pos = W(links_state.pos_bw, next_I, pos_, BW)
+            else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
+                dofs_state.pos[dof_start, i_b] = (
+                    rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+                )
+                pos_ = (
+                    R(links_state.pos_bw, curr_I, pos, BW)
+                    + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
+                )
+                pos = W(links_state.pos_bw, next_I, pos_, BW)
+                # Prismatic doesn't rotate the link, but the per-joint cache (quat_bw) still
+                # needs `next_I` populated — otherwise the final `R(quat_bw, I_jf, ...)` at the
+                # end of this function reads uninitialised memory in the backward-mode kernel,
+                # which surfaces as NaN gradients on qpos. Commit the unchanged quat to the
+                # next slot so the cache chain is contiguous through the loop iteration.
+                quat = W(links_state.quat_bw, next_I, quat, BW)
 
-            # Skip link pose update for fixed root links to let users manually overwrite them
-            I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
-            if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
-                links_state.pos[i_l, i_b] = R(links_state.pos_bw, I_jf, pos, BW)
-                links_state.quat[i_l, i_b] = R(links_state.quat_bw, I_jf, quat, BW)
+        # Skip link pose update for fixed root links to let users manually overwrite them
+        I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
+        if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
+            links_state.pos[i_l, i_b] = R(links_state.pos_bw, I_jf, pos, BW)
+            links_state.quat[i_l, i_b] = R(links_state.quat_bw, I_jf, quat, BW)
+
+
+@qd.func
+def func_forward_kinematics_entity_one_link(
+    i_e,
+    i_b,
+    i_l_offset,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Single-link version of `func_forward_kinematics_entity`. Same body as the outer-loop
+    iteration but with `i_l` computed from `i_l_offset` instead of looping. Used by
+    `kernel_update_cartesian_space_one_link` so each link is processed in a separate kernel
+    launch — this is needed for J4/J5 because the dynamic outer loop reads
+    `links_state.{pos,quat}[parent_idx]` cross-iteration, and Quadrants AD drops some
+    component of that adjoint within a single kernel launch.
+    """
+    BW = qd.static(is_backward)
+    W = qd.static(func_write_field_if)
+    R = qd.static(func_read_field_if)
+    WR = qd.static(func_write_and_read_field_if)
+    i_b = qd.cast(i_b, qd.i32)
+
+    i_l_ = entities_info.link_start[i_e] + i_l_offset
+    i_l = gs.qd_int(i_l_)
+
+    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+    I_l0 = (i_l, 0, i_b)
+
+    pos = W(links_state.pos_bw, I_l0, links_info.pos[I_l], BW)
+    quat = W(links_state.quat_bw, I_l0, links_info.quat[I_l], BW)
+    if links_info.parent_idx[I_l] != -1:
+        parent_pos = links_state.pos[links_info.parent_idx[I_l], i_b]
+        parent_quat = links_state.quat[links_info.parent_idx[I_l], i_b]
+        pos_ = parent_pos + gu.qd_transform_by_quat(links_info.pos[I_l], parent_quat)
+        quat_ = gu.qd_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
+
+        pos = W(links_state.pos_bw, I_l0, pos_, BW)
+        quat = W(links_state.quat_bw, I_l0, quat_, BW)
+
+    n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+
+    for i_j_ in range(n_joints):
+        i_j = i_j_ + links_info.joint_start[I_l]
+
+        curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
+        next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
+
+        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+        joint_type = joints_info.type[I_j]
+        q_start = joints_info.q_start[I_j]
+        dof_start = joints_info.dof_start[I_j]
+        I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
+
+        if joint_type == gs.JOINT_TYPE.FREE:
+            joints_state.xanchor[i_j, i_b] = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                ]
+            )
+            joints_state.xaxis[i_j, i_b] = qd.Vector([0.0, 0.0, 1.0])
+        elif joint_type == gs.JOINT_TYPE.FIXED:
+            pass
+        else:
+            axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+            if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                axis = dofs_info.motion_ang[I_d]
+            elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                axis = dofs_info.motion_vel[I_d]
+
+            pos_ = R(links_state.pos_bw, curr_I, pos, BW)
+            quat_ = R(links_state.quat_bw, curr_I, quat, BW)
+
+            joints_state.xanchor[i_j, i_b] = gu.qd_transform_by_quat(joints_info.pos[I_j], quat_) + pos_
+            joints_state.xaxis[i_j, i_b] = gu.qd_transform_by_quat(axis, quat_)
+
+        if joint_type == gs.JOINT_TYPE.FREE:
+            pos_ = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                ],
+                dt=gs.qd_float,
+            )
+            quat_ = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start + 3, i_b],
+                    rigid_global_info.qpos[q_start + 4, i_b],
+                    rigid_global_info.qpos[q_start + 5, i_b],
+                    rigid_global_info.qpos[q_start + 6, i_b],
+                ],
+                dt=gs.qd_float,
+            )
+            pos = WR(links_state.pos_bw, next_I, pos_, BW)
+            quat = WR(links_state.quat_bw, next_I, quat_, BW)
+
+            xyz = gu.qd_quat_to_xyz(quat, rigid_global_info.EPS[None])
+            for j in qd.static(range(3)):
+                dofs_state.pos[dof_start + j, i_b] = pos[j]
+                dofs_state.pos[dof_start + 3 + j, i_b] = xyz[j]
+        elif joint_type == gs.JOINT_TYPE.FIXED:
+            pos = W(links_state.pos_bw, next_I, pos, BW)
+            quat = W(links_state.quat_bw, next_I, quat, BW)
+        elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+            qloc = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                    rigid_global_info.qpos[q_start + 3, i_b],
+                ],
+                dt=gs.qd_float,
+            )
+            xyz = gu.qd_quat_to_xyz(qloc, rigid_global_info.EPS[None])
+            for j in qd.static(range(3)):
+                dofs_state.pos[dof_start + j, i_b] = xyz[j]
+            quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
+            quat = WR(links_state.quat_bw, next_I, quat_, BW)
+            pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
+            pos = W(links_state.pos_bw, next_I, pos_, BW)
+        elif joint_type == gs.JOINT_TYPE.REVOLUTE:
+            axis = dofs_info.motion_ang[I_d]
+            dofs_state.pos[dof_start, i_b] = (
+                rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+            )
+            qloc = gu.qd_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], rigid_global_info.EPS[None])
+            quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
+            quat = WR(links_state.quat_bw, next_I, quat_, BW)
+            pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
+            pos = W(links_state.pos_bw, next_I, pos_, BW)
+        else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
+            dofs_state.pos[dof_start, i_b] = (
+                rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+            )
+            pos_ = (
+                R(links_state.pos_bw, curr_I, pos, BW) + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
+            )
+            pos = W(links_state.pos_bw, next_I, pos_, BW)
+            quat = W(links_state.quat_bw, next_I, quat, BW)
+
+    I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
+    if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
+        links_state.pos[i_l, i_b] = R(links_state.pos_bw, I_jf, pos, BW)
+        links_state.quat[i_l, i_b] = R(links_state.quat_bw, I_jf, quat, BW)
+
+
+@qd.kernel(fastcache=True)
+def kernel_update_cartesian_space_one_link(
+    i_l_offset: qd.i32,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """One-link version of `kernel_update_cartesian_space` (FK only — skips COM/geom). Each
+    call processes only the link at `entities_info.link_start[i_e] + i_l_offset` for every
+    entity that has at least that many links. Diagnostic for J4/J5 cross-link adjoint
+    attenuation; if calling this kernel in sequence per link both for forward and reverse-
+    backward fixes the chain rule, the original architecture's single-kernel outer loop is
+    the place to refactor."""
+    qd.loop_config(
+        name="update_cartesian_space_one_link",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        n_links_in_entity = entities_info.link_end[i_e] - entities_info.link_start[i_e]
+        if i_l_offset < n_links_in_entity:
+            func_forward_kinematics_entity_one_link(
+                i_e,
+                i_b,
+                i_l_offset,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=is_backward,
+            )
 
 
 @qd.func
@@ -754,17 +1122,9 @@ def func_forward_kinematics_batch(
     i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
-        (
-            range(rigid_global_info.n_awake_entities[i_b])
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else range(entities_info.n_links.shape[0])
-        )
-        if qd.static(not BW)
-        else (
-            qd.static(range(static_rigid_sim_config.max_n_awake_entities))
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-        )
+        range(rigid_global_info.n_awake_entities[i_b])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else range(entities_info.n_links.shape[0])
     ):
         if func_check_index_range(
             i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
@@ -883,18 +1243,9 @@ def func_update_geoms_batch(
     i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
-        (
-            # Dynamic inner loop for forward pass
-            range(rigid_global_info.n_awake_entities[i_b])
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else range(entities_info.n_links.shape[0])
-        )
-        if qd.static(not BW)
-        else (
-            qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-        )
+        range(rigid_global_info.n_awake_entities[i_b])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else range(entities_info.n_links.shape[0])
     ):
         if func_check_index_range(
             i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
@@ -989,6 +1340,41 @@ def kernel_update_geoms(
         )
 
 
+@qd.kernel(fastcache=True)
+def kernel_update_geoms_diff(
+    entities_info: array_class.EntitiesInfo,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Differentiable geom-pose update for the backward replay.
+
+    Wraps `func_update_geoms` (the entity-level differentiable loop, NOT the
+    `envs_idx`-driven `kernel_update_geoms` used for set-state ops). Run with
+    `is_backward=True` to tape with a static geom loop, then call `.grad` to
+    reverse `geoms_state.{pos,quat}.grad -> links_state.{pos,quat}.grad`.
+
+    This restores the geom-pose reverse that the auto-AD
+    `func_update_cartesian_space.grad` used to provide before it was replaced
+    by the manual `kernel_manual_fk_only_bw` (which only reverses FK, not the
+    link->geom transform). Without it, the contact-data grads produced by
+    `collider.backward` dead-end at `geoms_state.grad`.
+    """
+    func_update_geoms(
+        entities_info,
+        geoms_state,
+        geoms_info,
+        links_state,
+        rigid_global_info,
+        static_rigid_sim_config,
+        force_update_fixed_geoms=False,
+        is_backward=is_backward,
+    )
+
+
 @qd.func
 def func_forward_velocity_entity(
     i_e,
@@ -1008,112 +1394,236 @@ def func_forward_velocity_entity(
     A = qd.static(func_atomic_add_if)
     i_b = qd.cast(i_b, qd.i32)
 
-    for i_l_ in (
-        range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if qd.static(not BW)
-        else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-    ):
-        i_l = gs.qd_int(i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e]))
+    for i_l_ in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        i_l = gs.qd_int(i_l_)
 
-        if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
-            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
-            n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
-            I_j0 = (i_l, 0, i_b)
-            cvel_vel = W(links_state.cd_vel_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
-            cvel_ang = W(links_state.cd_ang_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
+        I_j0 = (i_l, 0, i_b)
+        cvel_vel = W(links_state.cd_vel_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
+        cvel_ang = W(links_state.cd_ang_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
 
-            if links_info.parent_idx[I_l] != -1:
-                cvel_vel = W(links_state.cd_vel_bw, I_j0, links_state.cd_vel[links_info.parent_idx[I_l], i_b], BW)
-                cvel_ang = W(links_state.cd_ang_bw, I_j0, links_state.cd_ang[links_info.parent_idx[I_l], i_b], BW)
+        if links_info.parent_idx[I_l] != -1:
+            cvel_vel = W(links_state.cd_vel_bw, I_j0, links_state.cd_vel[links_info.parent_idx[I_l], i_b], BW)
+            cvel_ang = W(links_state.cd_ang_bw, I_j0, links_state.cd_ang[links_info.parent_idx[I_l], i_b], BW)
 
-            for i_j_ in (
-                range(n_joints)
-                if qd.static(not BW)
-                else qd.static(range(static_rigid_sim_config.max_n_joints_per_link))
-            ):
-                i_j = i_j_ + links_info.joint_start[I_l]
+        for i_j_ in range(n_joints):
+            i_j = i_j_ + links_info.joint_start[I_l]
 
-                if func_check_index_range(i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], BW):
-                    I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
-                    joint_type = joints_info.type[I_j]
-                    dof_start = joints_info.dof_start[I_j]
+            I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+            joint_type = joints_info.type[I_j]
+            dof_start = joints_info.dof_start[I_j]
 
-                    curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
-                    next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
+            curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
+            next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
 
-                    if joint_type == gs.JOINT_TYPE.FREE:
-                        for i_3 in qd.static(range(3)):
-                            _vel = dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
-                            _ang = dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
+            if joint_type == gs.JOINT_TYPE.FREE:
+                for i_3 in qd.static(range(3)):
+                    _vel = dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
+                    _ang = dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
 
-                            cvel_vel = cvel_vel + A(links_state.cd_vel_bw, curr_I, _vel, BW)
-                            cvel_ang = cvel_ang + A(links_state.cd_ang_bw, curr_I, _ang, BW)
+                    cvel_vel = cvel_vel + A(links_state.cd_vel_bw, curr_I, _vel, BW)
+                    cvel_ang = cvel_ang + A(links_state.cd_ang_bw, curr_I, _ang, BW)
 
-                        for i_3 in qd.static(range(3)):
-                            (
-                                dofs_state.cdofd_ang[dof_start + i_3, i_b],
-                                dofs_state.cdofd_vel[dof_start + i_3, i_b],
-                            ) = qd.Vector.zero(gs.qd_float, 3), qd.Vector.zero(gs.qd_float, 3)
+                for i_3 in qd.static(range(3)):
+                    (
+                        dofs_state.cdofd_ang[dof_start + i_3, i_b],
+                        dofs_state.cdofd_vel[dof_start + i_3, i_b],
+                    ) = qd.Vector.zero(gs.qd_float, 3), qd.Vector.zero(gs.qd_float, 3)
 
-                            (
-                                dofs_state.cdofd_ang[dof_start + i_3 + 3, i_b],
-                                dofs_state.cdofd_vel[dof_start + i_3 + 3, i_b],
-                            ) = gu.motion_cross_motion(
-                                R(links_state.cd_ang_bw, curr_I, cvel_ang, BW),
-                                R(links_state.cd_vel_bw, curr_I, cvel_vel, BW),
-                                dofs_state.cdof_ang[dof_start + i_3 + 3, i_b],
-                                dofs_state.cdof_vel[dof_start + i_3 + 3, i_b],
-                            )
+                    (
+                        dofs_state.cdofd_ang[dof_start + i_3 + 3, i_b],
+                        dofs_state.cdofd_vel[dof_start + i_3 + 3, i_b],
+                    ) = gu.motion_cross_motion(
+                        R(links_state.cd_ang_bw, curr_I, cvel_ang, BW),
+                        R(links_state.cd_vel_bw, curr_I, cvel_vel, BW),
+                        dofs_state.cdof_ang[dof_start + i_3 + 3, i_b],
+                        dofs_state.cdof_vel[dof_start + i_3 + 3, i_b],
+                    )
 
-                        if qd.static(BW):
-                            links_state.cd_vel_bw[next_I] = links_state.cd_vel_bw[curr_I]
-                            links_state.cd_ang_bw[next_I] = links_state.cd_ang_bw[curr_I]
+                if qd.static(BW):
+                    links_state.cd_vel_bw[next_I] = links_state.cd_vel_bw[curr_I]
+                    links_state.cd_ang_bw[next_I] = links_state.cd_ang_bw[curr_I]
 
-                        for i_3 in qd.static(range(3)):
-                            _vel = (
-                                dofs_state.cdof_vel[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
-                            )
-                            _ang = (
-                                dofs_state.cdof_ang[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
-                            )
-                            cvel_vel = cvel_vel + A(links_state.cd_vel_bw, next_I, _vel, BW)
-                            cvel_ang = cvel_ang + A(links_state.cd_ang_bw, next_I, _ang, BW)
+                for i_3 in qd.static(range(3)):
+                    _vel = dofs_state.cdof_vel[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
+                    _ang = dofs_state.cdof_ang[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
+                    cvel_vel = cvel_vel + A(links_state.cd_vel_bw, next_I, _vel, BW)
+                    cvel_ang = cvel_ang + A(links_state.cd_ang_bw, next_I, _ang, BW)
 
-                    else:
-                        for i_d_ in (
-                            range(dof_start, joints_info.dof_end[I_j])
-                            if qd.static(not BW)
-                            else qd.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
-                        ):
-                            i_d = i_d_ if qd.static(not BW) else (i_d_ + dof_start)
-                            if func_check_index_range(i_d, dof_start, joints_info.dof_end[I_j], BW):
-                                dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
-                                    R(links_state.cd_ang_bw, curr_I, cvel_ang, BW),
-                                    R(links_state.cd_vel_bw, curr_I, cvel_vel, BW),
-                                    dofs_state.cdof_ang[i_d, i_b],
-                                    dofs_state.cdof_vel[i_d, i_b],
-                                )
+            else:
+                for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                    dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
+                        R(links_state.cd_ang_bw, curr_I, cvel_ang, BW),
+                        R(links_state.cd_vel_bw, curr_I, cvel_vel, BW),
+                        dofs_state.cdof_ang[i_d, i_b],
+                        dofs_state.cdof_vel[i_d, i_b],
+                    )
 
-                        if qd.static(BW):
-                            links_state.cd_vel_bw[next_I] = links_state.cd_vel_bw[curr_I]
-                            links_state.cd_ang_bw[next_I] = links_state.cd_ang_bw[curr_I]
+                if qd.static(BW):
+                    links_state.cd_vel_bw[next_I] = links_state.cd_vel_bw[curr_I]
+                    links_state.cd_ang_bw[next_I] = links_state.cd_ang_bw[curr_I]
 
-                        for i_d_ in (
-                            range(dof_start, joints_info.dof_end[I_j])
-                            if qd.static(not BW)
-                            else qd.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
-                        ):
-                            i_d = i_d_ if qd.static(not BW) else (i_d_ + dof_start)
-                            if func_check_index_range(i_d, dof_start, joints_info.dof_end[I_j], BW):
-                                _vel = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                _ang = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                cvel_vel = cvel_vel + A(links_state.cd_vel_bw, next_I, _vel, BW)
-                                cvel_ang = cvel_ang + A(links_state.cd_ang_bw, next_I, _ang, BW)
+                for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                    _vel = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                    _ang = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                    cvel_vel = cvel_vel + A(links_state.cd_vel_bw, next_I, _vel, BW)
+                    cvel_ang = cvel_ang + A(links_state.cd_ang_bw, next_I, _ang, BW)
 
-            I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
-            links_state.cd_vel[i_l, i_b] = R(links_state.cd_vel_bw, I_jf, cvel_vel, BW)
-            links_state.cd_ang[i_l, i_b] = R(links_state.cd_ang_bw, I_jf, cvel_ang, BW)
+        I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
+        links_state.cd_vel[i_l, i_b] = R(links_state.cd_vel_bw, I_jf, cvel_vel, BW)
+        links_state.cd_ang[i_l, i_b] = R(links_state.cd_ang_bw, I_jf, cvel_ang, BW)
+
+
+@qd.func
+def func_forward_velocity_entity_one_link(
+    i_e,
+    i_b,
+    i_l_offset,
+    entities_info: array_class.EntitiesInfo,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Single-link version of `func_forward_velocity_entity`. Same body as the outer-loop
+    iteration but with `i_l` derived from `i_l_offset` instead of looping over the entity's
+    links. Mirrors `func_forward_kinematics_entity_one_link` — used by
+    `kernel_forward_velocity_one_link` so each link is processed in a separate kernel launch,
+    isolating the cross-link `cd_{vel,ang}[parent_idx]` read so Quadrants AD can keep its
+    adjoint intact (otherwise the Coriolis chain through dynamics drops grads for child-
+    joint qvel).
+    """
+    BW = qd.static(is_backward)
+    W = qd.static(func_write_field_if)
+    R = qd.static(func_read_field_if)
+    A = qd.static(func_atomic_add_if)
+    i_b = qd.cast(i_b, qd.i32)
+
+    i_l_ = entities_info.link_start[i_e] + i_l_offset
+    i_l = gs.qd_int(i_l_)
+
+    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+    n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+
+    I_j0 = (i_l, 0, i_b)
+    cvel_vel = W(links_state.cd_vel_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
+    cvel_ang = W(links_state.cd_ang_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
+
+    if links_info.parent_idx[I_l] != -1:
+        cvel_vel = W(links_state.cd_vel_bw, I_j0, links_state.cd_vel[links_info.parent_idx[I_l], i_b], BW)
+        cvel_ang = W(links_state.cd_ang_bw, I_j0, links_state.cd_ang[links_info.parent_idx[I_l], i_b], BW)
+
+    for i_j_ in range(n_joints):
+        i_j = i_j_ + links_info.joint_start[I_l]
+
+        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+        joint_type = joints_info.type[I_j]
+        dof_start = joints_info.dof_start[I_j]
+
+        curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
+        next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
+
+        if joint_type == gs.JOINT_TYPE.FREE:
+            for i_3 in qd.static(range(3)):
+                _vel = dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
+                _ang = dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
+
+                cvel_vel = cvel_vel + A(links_state.cd_vel_bw, curr_I, _vel, BW)
+                cvel_ang = cvel_ang + A(links_state.cd_ang_bw, curr_I, _ang, BW)
+
+            for i_3 in qd.static(range(3)):
+                (
+                    dofs_state.cdofd_ang[dof_start + i_3, i_b],
+                    dofs_state.cdofd_vel[dof_start + i_3, i_b],
+                ) = qd.Vector.zero(gs.qd_float, 3), qd.Vector.zero(gs.qd_float, 3)
+
+                (
+                    dofs_state.cdofd_ang[dof_start + i_3 + 3, i_b],
+                    dofs_state.cdofd_vel[dof_start + i_3 + 3, i_b],
+                ) = gu.motion_cross_motion(
+                    R(links_state.cd_ang_bw, curr_I, cvel_ang, BW),
+                    R(links_state.cd_vel_bw, curr_I, cvel_vel, BW),
+                    dofs_state.cdof_ang[dof_start + i_3 + 3, i_b],
+                    dofs_state.cdof_vel[dof_start + i_3 + 3, i_b],
+                )
+
+            if qd.static(BW):
+                links_state.cd_vel_bw[next_I] = links_state.cd_vel_bw[curr_I]
+                links_state.cd_ang_bw[next_I] = links_state.cd_ang_bw[curr_I]
+
+            for i_3 in qd.static(range(3)):
+                _vel = dofs_state.cdof_vel[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
+                _ang = dofs_state.cdof_ang[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
+                cvel_vel = cvel_vel + A(links_state.cd_vel_bw, next_I, _vel, BW)
+                cvel_ang = cvel_ang + A(links_state.cd_ang_bw, next_I, _ang, BW)
+
+        else:
+            for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
+                    R(links_state.cd_ang_bw, curr_I, cvel_ang, BW),
+                    R(links_state.cd_vel_bw, curr_I, cvel_vel, BW),
+                    dofs_state.cdof_ang[i_d, i_b],
+                    dofs_state.cdof_vel[i_d, i_b],
+                )
+
+            if qd.static(BW):
+                links_state.cd_vel_bw[next_I] = links_state.cd_vel_bw[curr_I]
+                links_state.cd_ang_bw[next_I] = links_state.cd_ang_bw[curr_I]
+
+            for i_d in range(dof_start, joints_info.dof_end[I_j]):
+                _vel = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                _ang = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                cvel_vel = cvel_vel + A(links_state.cd_vel_bw, next_I, _vel, BW)
+                cvel_ang = cvel_ang + A(links_state.cd_ang_bw, next_I, _ang, BW)
+
+    I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
+    links_state.cd_vel[i_l, i_b] = R(links_state.cd_vel_bw, I_jf, cvel_vel, BW)
+    links_state.cd_ang[i_l, i_b] = R(links_state.cd_ang_bw, I_jf, cvel_ang, BW)
+
+
+@qd.kernel(fastcache=True)
+def kernel_forward_velocity_one_link(
+    i_l_offset: qd.i32,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """One-link version of `kernel_forward_velocity`. Each call processes only the link at
+    `entities_info.link_start[i_e] + i_l_offset` for every entity that has at least that
+    many links. Diagnostic mirror of `kernel_update_cartesian_space_one_link` — calling this
+    in sequence per link (forward) and reverse-order (backward) lets the cross-link
+    `cd_{vel,ang}[parent_idx]` adjoint flow correctly through the Coriolis chain, so child-
+    joint qvel grads survive `kernel_compute_qacc.grad` / `kernel_forward_dynamics_without_qacc.grad`."""
+    qd.loop_config(
+        name="forward_velocity_one_link",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+    )
+    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        n_links_in_entity = entities_info.link_end[i_e] - entities_info.link_start[i_e]
+        if i_l_offset < n_links_in_entity:
+            func_forward_velocity_entity_one_link(
+                i_e=i_e,
+                i_b=i_b,
+                i_l_offset=i_l_offset,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=is_backward,
+            )
 
 
 @qd.func
@@ -1132,18 +1642,9 @@ def func_forward_velocity_batch(
     i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
-        (
-            # Dynamic inner loop for forward pass
-            range(rigid_global_info.n_awake_entities[i_b])
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else range(entities_info.n_links.shape[0])
-        )
-        if qd.static(not BW)
-        else (
-            qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-        )
+        range(rigid_global_info.n_awake_entities[i_b])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else range(entities_info.n_links.shape[0])
     ):
         if func_check_index_range(
             i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
@@ -1579,43 +2080,29 @@ def func_update_cartesian_space_batch(
     # This loop is considered an inner loop
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_0 in (
-        (
-            # Dynamic inner loop for forward pass
-            range(rigid_global_info.n_awake_entities[i_b])
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else range(entities_info.n_links.shape[0])
-        )
-        if qd.static(not BW)
-        else (
-            qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
-        )
+        range(rigid_global_info.n_awake_entities[i_b])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else range(entities_info.n_links.shape[0])
     ):
-        if func_check_index_range(i_0, 0, rigid_global_info.n_awake_entities[i_b], BW):
-            i_e = (
-                rigid_global_info.awake_entities[i_0, i_b]
-                if qd.static(static_rigid_sim_config.use_hibernation)
-                else i_0
-            )
+        i_e = rigid_global_info.awake_entities[i_0, i_b] if qd.static(static_rigid_sim_config.use_hibernation) else i_0
 
-            func_update_cartesian_space_entity(
-                i_e,
-                i_b,
-                links_state,
-                links_info,
-                joints_state,
-                joints_info,
-                dofs_state,
-                dofs_info,
-                geoms_state,
-                geoms_info,
-                entities_info,
-                rigid_global_info,
-                static_rigid_sim_config,
-                force_update_fixed_geoms,
-                is_backward,
-            )
+        func_update_cartesian_space_entity(
+            i_e,
+            i_b,
+            links_state,
+            links_info,
+            joints_state,
+            joints_info,
+            dofs_state,
+            dofs_info,
+            geoms_state,
+            geoms_info,
+            entities_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            force_update_fixed_geoms,
+            is_backward,
+        )
 
 
 @qd.func
@@ -1668,34 +2155,168 @@ def func_update_cartesian_space(
             i_l_start = entities_info.link_start[i_e]
             I_l_start = [i_l_start, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l_start
             if links_info.root_idx[I_l_start] == i_l_start:
-                for j_e in (
-                    range(i_e, entities_info.n_links.shape[0])
-                    if qd.static(not BW)
-                    else qd.static(range(static_rigid_sim_config.n_entities))
-                ):
-                    if func_check_index_range(j_e, i_e, static_rigid_sim_config.n_entities, BW):
-                        j_l_start = entities_info.link_start[j_e]
-                        J_l_start = (
-                            [j_l_start, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else j_l_start
+                for j_e in range(i_e, entities_info.n_links.shape[0]):
+                    j_l_start = entities_info.link_start[j_e]
+                    J_l_start = [j_l_start, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else j_l_start
+                    if links_info.root_idx[J_l_start] == i_l_start:
+                        func_update_cartesian_space_entity(
+                            j_e,
+                            i_b,
+                            links_state,
+                            links_info,
+                            joints_state,
+                            joints_info,
+                            dofs_state,
+                            dofs_info,
+                            geoms_state,
+                            geoms_info,
+                            entities_info,
+                            rigid_global_info,
+                            static_rigid_sim_config,
+                            force_update_fixed_geoms,
+                            is_backward,
                         )
-                        if links_info.root_idx[J_l_start] == i_l_start:
-                            func_update_cartesian_space_entity(
-                                j_e,
-                                i_b,
-                                links_state,
-                                links_info,
-                                joints_state,
-                                joints_info,
-                                dofs_state,
-                                dofs_info,
-                                geoms_state,
-                                geoms_info,
-                                entities_info,
-                                rigid_global_info,
-                                static_rigid_sim_config,
-                                force_update_fixed_geoms,
-                                is_backward,
-                            )
+
+
+@qd.kernel(fastcache=True)
+def kernel_COM_links(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Standalone wrapper for `func_COM_links` so its reverse can be invoked
+    independently of `kernel_update_cartesian_space.grad`.
+
+    Forward replay sets `i_pos_bw`, `i_quat`, `root_COM*`, `cinr_*`,
+    `cdof_*`, `cdofvel_*`, `j_*` from `links_state.{pos,quat}`. Backward
+    chains `cinr_*.grad / cdof_*.grad → i_pos.grad / i_quat.grad → ...
+    → links_state.{pos,quat}.grad`. Required between
+    `kernel_forward_velocity_one_link.grad` and
+    `kernel_update_cartesian_space_one_link.grad` in
+    `substep_pre_coupling_grad`: the one_link split of update_cartesian_space
+    only handles `func_forward_kinematics_entity_one_link` (link
+    transforms), so without this `cinr/cdof.grad` accumulated by
+    `kernel_forward_dynamics_without_qacc.grad` never reaches qpos.grad.
+    """
+    for i_b in range(links_state.pos.shape[1]):
+        func_COM_links(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
+
+
+@qd.kernel(fastcache=True)
+def kernel_COM_links_main(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """`kernel_COM_links` without Phase 5 (j_pos/j_quat propagation).
+
+    Used in `substep_pre_coupling_grad` paired with
+    `kernel_manual_COM_links_phase5_bw` to bypass Quadrants AD's silent drop
+    on the Phase 5 cross-link grad chain (parent's pos/quat read into a local
+    `p_pos`, `p_quat`). Forward replay covers Phase 0-4 (i_pos_bw, i_quat,
+    root_COM*, cinr_*) and Phase 6 (cdof_*, cdofvel_*); the missing Phase 5
+    forward must be supplied separately by `kernel_j_pos_quat_propagation`
+    before calling this kernel — otherwise downstream consumers of `j_pos`,
+    `j_quat`, `j_pos_bw`, `j_quat_bw` will read stale values.
+    """
+    for i_b in range(links_state.pos.shape[1]):
+        for i_e_ in (
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else range(entities_info.n_links.shape[0])
+        ):
+            if func_check_index_range(
+                i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_e_, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_e_
+                )
+                func_COM_links_entity_main(
+                    i_e,
+                    i_b,
+                    links_state,
+                    links_info,
+                    joints_state,
+                    joints_info,
+                    dofs_state,
+                    dofs_info,
+                    entities_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    is_backward,
+                )
+
+
+@qd.kernel(fastcache=True)
+def kernel_j_pos_quat_propagation(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Standalone kernel for Phase 5 (j_pos/j_quat propagation only).
+
+    Pairs with `kernel_COM_links_main` to recover the full `kernel_COM_links`
+    forward output. Backward is replaced by `kernel_manual_COM_links_phase5_bw`
+    (manual chain rule) to bypass Quadrants AD's silent drop on cross-link
+    parent.pos/parent.quat reads (J4/J5 standalone FD shows pos/quat.grad
+    rel error ~17-86% via auto-AD vs FP64 floor for other inputs).
+    """
+    for i_b in range(links_state.pos.shape[1]):
+        for i_e_ in (
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else range(entities_info.n_links.shape[0])
+        ):
+            if func_check_index_range(
+                i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_e_, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_e_
+                )
+                func_j_pos_quat_propagation_entity(
+                    i_e,
+                    i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_info=joints_info,
+                    entities_info=entities_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    is_backward=is_backward,
+                )
 
 
 @qd.kernel(fastcache=True)

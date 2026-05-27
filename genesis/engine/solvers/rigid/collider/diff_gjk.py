@@ -863,6 +863,57 @@ def func_differentiable_contact(
 
 
 @qd.func
+def func_differentiable_plane_contact(
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    diff_contact_input: array_class.DiffContactInput,
+    i_ga,
+    i_gb,
+    i_b,
+    i_c,
+):
+    """Differentiable plane-convex contact reconstruction.
+
+    Mirrors the analytic plane branch of `func_convex_convex_contact`:
+        normal      = -normalize(R(quat_plane) @ plane_local_dir)
+        v_world     = R(quat_convex) @ core_local + pos_convex + radius * normal
+        penetration = normal . (v_world - pos_plane)
+        contact_pos = v_world - 0.5 * penetration * normal
+
+    `i_ga` is the PLANE geom, `i_gb` the convex geom. `core_local` (box vertex /
+    sphere center / capsule nearest endpoint, in convex-local frame) is the
+    stored non-diff witness; `radius` and `plane_local_dir` come from geoms_info.
+    Gradients flow to both geom poses through `geoms_state.{pos,quat}`. For a
+    sphere `core_local` is the local origin, so the orientation gradient is
+    naturally zero (the contact is rotation-invariant), matching the forward.
+    """
+    trans_plane = geoms_state.pos[i_ga, i_b]
+    quat_plane = geoms_state.quat[i_ga, i_b]
+    trans_convex = geoms_state.pos[i_gb, i_b]
+    quat_convex = geoms_state.quat[i_gb, i_b]
+
+    plane_dir = gs.qd_vec3(geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2])
+    plane_dir = gu.qd_transform_by_quat(plane_dir, quat_plane)
+    normal = -plane_dir.normalized()
+
+    radius = gs.qd_float(0.0)
+    convex_type = geoms_info.type[i_gb]
+    if convex_type == gs.GEOM_TYPE.SPHERE:
+        radius = geoms_info.data[i_gb][0]
+    elif convex_type == gs.GEOM_TYPE.CAPSULE:
+        radius = geoms_info.data[i_gb][0]
+
+    core_local = diff_contact_input.core_local[i_b, i_c]
+    core_world = gu.qd_transform_by_trans_quat(core_local, trans_convex, quat_convex)
+    v_world = core_world + radius * normal
+
+    penetration = normal.dot(v_world - trans_plane)
+    contact_pos = v_world - 0.5 * penetration * normal
+    weight = gs.qd_float(1.0)
+    return contact_pos, normal, penetration, weight
+
+
+@qd.func
 def func_plane_normal(v1, v2, v3):
     """
     Compute the normal of the plane defined by three points. The length of the normal corresponds to the two times the

@@ -1546,7 +1546,15 @@ def func_hessian_direct_tiled(
         i_b = i // BLOCK_DIM
         if i_b >= _B:
             continue
-        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+        # NOTE: n_constraints == 0 must NOT short-circuit here — the
+        # block below (after the main accumulation loop) has a dedicated
+        # `if n_c == 0: nt_H = M` fallback that is the *only* path to
+        # write `nt_H` when there is no active constraint. Without it,
+        # GPU keeps the prior substep's stale `nt_H` whereas the CPU
+        # `func_hessian_direct_batch` resets and rebuilds every call.
+        # The mismatch was the root cause of the cart+pole multi-body
+        # backward GPU amplification (project_diffrigid_joint_limit_grad_explosion.md).
+        if constraint_state.n_constraints[i_b] > 0 and not constraint_state.improved[i_b]:
             continue
         if qd.static(check_full_hessian):
             if constraint_state.use_full_hessian[i_b] == 0:

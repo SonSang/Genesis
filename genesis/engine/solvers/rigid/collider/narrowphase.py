@@ -2093,9 +2093,24 @@ def func_narrow_phase_diff_convex_vs_convex(
 
             if is_ref:
                 ref_penetration = -1.0
-                contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-                )
+                # Declare before the branch: Quadrants' scope analysis treats
+                # variables assigned only inside if/else as undefined outside.
+                contact_pos = gs.qd_vec3(0.0, 0.0, 0.0)
+                contact_normal = gs.qd_vec3(0.0, 0.0, 0.0)
+                penetration = gs.qd_float(0.0)
+                weight = gs.qd_float(0.0)
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                    # Plane-convex: analytic differentiable reconstruction from
+                    # the stored convex support core (geom_a is the plane after
+                    # the canonical type-ordered swap). Always a self-referencing
+                    # ("ref") contact, so it is handled entirely in this loop.
+                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_plane_contact(
+                        geoms_state, geoms_info, diff_contact_input, i_ga, i_gb, i_b, i_c
+                    )
+                else:
+                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
+                        geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+                    )
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
                 func_set_contact(
@@ -2141,6 +2156,60 @@ def func_narrow_phase_diff_convex_vs_convex(
                     collider_state,
                     collider_info,
                 )
+
+
+@qd.kernel(fastcache=True)
+def kernel_fill_diff_contact_input_plane(
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_state: array_class.ColliderState,
+):
+    """Populate `diff_contact_input` for plane-convex contacts (forward, non-diff).
+
+    The analytic plane paths (`func_plane_box_contact`,
+    `func_convex_convex_contact`'s plane branch) do NOT fill `diff_contact_input`,
+    so the differentiable narrow-phase reverse would have nothing to reconstruct.
+    Both paths use the same convention `contact_pos = v1 - 0.5*pen*normal` with
+    `normal = -normalize(R(quat_plane) @ plane_local_dir)`, so the convex support
+    point is recovered as `v1 = contact_pos + 0.5*pen*normal`, and its non-diff
+    "core" (vertex / sphere center / capsule endpoint) as `v1 - radius*normal`,
+    stored in the convex's local frame. PLANE is GEOM_TYPE 0 so it is always
+    `geom_a` after the canonical type-ordered swap.
+    """
+    _B = collider_state.active_buffer.shape[1]
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_c, i_b in qd.ndrange(collider_state.contact_data.pos.shape[0], _B):
+        if i_c < collider_state.n_contacts[i_b]:
+            i_ga = collider_state.contact_data.geom_a[i_c, i_b]
+            i_gb = collider_state.contact_data.geom_b[i_c, i_b]
+            if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                quat_plane = geoms_state.quat[i_ga, i_b]
+                trans_convex = geoms_state.pos[i_gb, i_b]
+                quat_convex = geoms_state.quat[i_gb, i_b]
+
+                plane_dir = gs.qd_vec3(geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2])
+                plane_dir = gu.qd_transform_by_quat(plane_dir, quat_plane)
+                normal = -plane_dir.normalized()
+
+                radius = gs.qd_float(0.0)
+                ctype = geoms_info.type[i_gb]
+                if ctype == gs.GEOM_TYPE.SPHERE:
+                    radius = geoms_info.data[i_gb][0]
+                elif ctype == gs.GEOM_TYPE.CAPSULE:
+                    radius = geoms_info.data[i_gb][0]
+
+                pen = collider_state.contact_data.penetration[i_c, i_b]
+                cpos = collider_state.contact_data.pos[i_c, i_b]
+                v1 = cpos + 0.5 * pen * normal
+                core_world = v1 - radius * normal
+                core_local = gu.qd_transform_by_quat(core_world - trans_convex, gu.qd_inv_quat(quat_convex))
+
+                collider_state.diff_contact_input.geom_a[i_b, i_c] = i_ga
+                collider_state.diff_contact_input.geom_b[i_b, i_c] = i_gb
+                collider_state.diff_contact_input.core_local[i_b, i_c] = core_local
+                collider_state.diff_contact_input.ref_id[i_b, i_c] = i_c
+                collider_state.diff_contact_input.valid[i_b, i_c] = 1
 
 
 @qd.kernel(fastcache=True)

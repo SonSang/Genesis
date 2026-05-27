@@ -44,6 +44,7 @@ from .rigid.abd.accessor import (
     kernel_set_dofs_position,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_force_grad,
     kernel_set_dofs_zero_velocity,
     kernel_set_links_pos,
     kernel_set_links_quat,
@@ -913,6 +914,18 @@ class KinematicSolver(Solver):
         kernel_set_dofs_velocity_grad(
             velocity_grad_, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config
         )
+
+    def set_dofs_force_grad(self, dofs_idx, envs_idx, force_grad):
+        """Read `ctrl_force.grad` from the simulator into a torch tensor and zero it.
+
+        Used by the @tracked `control_dofs_force` -> `process_input_grad` chain.
+        """
+        force_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
+            force_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+        )
+        if self.n_envs == 0:
+            force_grad_ = force_grad_.unsqueeze(0)
+        kernel_set_dofs_force_grad(force_grad_, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
