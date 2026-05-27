@@ -1,0 +1,49 @@
+# SHAC config for Hopper — maps NVlabs/DiffRL (ICLR'22)
+# `examples/cfg/shac/hopper.yaml` onto the Genesis port's flattened schema.
+#
+# Differentiable foot-ground contact backward (collision constraint reverse +
+# diff-GJK + link->geom reverse) is now wired up, so SHAC training through
+# contact works. num_actors is dropped from DiffRL's 256 to 64 to keep
+# iteration cheap; bump back to 256 for a paper-scale run.
+#
+# NOTE: LRs must use decimal notation (0.002, not 2e-3) — PyYAML parses
+# unpunctuated scientific notation as a string, which the optimizer rejects.
+
+env:
+  name: HopperEnv
+  episode_length: 1000
+  stochastic_init: True
+
+actor:
+  units: [128, 64, 32]
+  activation: elu
+  stochastic: True
+  logstd_init: -1.0
+
+critic:
+  units: [64, 64]
+  activation: elu
+
+trainer:
+  max_epochs: 500
+  steps_num: 8
+  num_actors: 256
+  actor_lr: 0.002
+  critic_lr: 0.0002
+  lr_schedule: linear
+  betas: [0.7, 0.95]
+  gamma: 0.99
+  lam: 0.95
+  grad_norm: 1.0
+  truncate_grads: True
+  critic_iterations: 16
+  critic_method: td-lambda
+  num_batch: 4
+  target_critic_alpha: 0.2
+  obs_rms: True
+  save_interval: 400
+  log_interval: 1
+  eval_interval: 50
+  eval_episodes: 20
+  eval_video_fps: 60
+  seed: 0
